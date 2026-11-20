@@ -10,9 +10,9 @@ multi-clinic isolation.
 Phase 0: receive a WhatsApp webhook, persist it safely, process it in a worker,
 and send an echo response through the WhatsApp Cloud API.
 
-The current checkpoint contains repository metadata and the initial Python
-package only. See [the Phase 0 plan](docs/phase-0.md) for the small-step build
-sequence.
+The current checkpoint contains a local FastAPI application with a tested
+health endpoint. See [the Phase 0 plan](docs/phase-0.md) for the small-step
+build sequence.
 
 ## Technology direction
 
@@ -22,8 +22,33 @@ sequence.
 - A separate web process and worker process
 - Heroku for the first deployment
 
-Dependencies will be added when the first executable slice is introduced so
-that each choice is explained and testable.
+Dependencies are managed with uv and locked in `uv.lock`.
+
+## Local development
+
+Create or synchronize the project environment:
+
+```powershell
+uv sync
+```
+
+Run the development server:
+
+```powershell
+uv run uvicorn clinicflow.main:app --reload
+```
+
+Then open `http://127.0.0.1:8000/health`. The expected response is:
+
+```json
+{"status": "ok"}
+```
+
+Run the automated tests:
+
+```powershell
+uv run pytest
+```
 
 ## Configuration
 

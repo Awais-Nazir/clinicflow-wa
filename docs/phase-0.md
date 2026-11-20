@@ -10,9 +10,10 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
 
 ## Incremental checkpoints
 
-1. **Repository skeleton** — initialize Git, document configuration, and create
-   the Python package.
-2. **Local HTTP slice** — add FastAPI, a health endpoint, and automated tests.
+1. ✅ **Repository skeleton** — initialize Git, document configuration, and
+   create the Python package.
+2. ✅ **Local HTTP slice** — add FastAPI, a health endpoint, and automated
+   tests.
 3. **Webhook verification** — implement and test Meta's GET verification
    handshake.
 4. **Authenticated ingestion** — verify POST signatures using the raw request
