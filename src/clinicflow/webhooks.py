@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 from typing import Annotated
@@ -11,10 +12,11 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, 
 from fastapi.responses import PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 
-from clinicflow.events import extract_text_messages
+from clinicflow.events import extract_failed_deliveries, extract_text_messages
 from clinicflow.inbox import enqueue_text_messages
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+LOGGER = logging.getLogger(__name__)
 
 
 def has_valid_signature(
@@ -93,5 +95,13 @@ async def receive_whatsapp_webhook(
     messages = extract_text_messages(payload)
     if messages and isinstance(payload, dict):
         await run_in_threadpool(enqueue_text_messages, messages, payload)
+
+    for failure in extract_failed_deliveries(payload):
+        LOGGER.error(
+            "WhatsApp delivery failed message_id=%s code=%s detail=%s",
+            failure.message_id,
+            failure.error_code,
+            failure.detail,
+        )
 
     return Response(status_code=status.HTTP_200_OK)

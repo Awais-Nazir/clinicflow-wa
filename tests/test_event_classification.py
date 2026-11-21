@@ -7,7 +7,12 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from clinicflow.events import InboundTextMessage, extract_text_messages
+from clinicflow.events import (
+    FailedDelivery,
+    InboundTextMessage,
+    extract_failed_deliveries,
+    extract_text_messages,
+)
 from clinicflow.main import app
 
 APP_SECRET = "test-app-secret"
@@ -75,6 +80,19 @@ def status_payload(delivery_status: str) -> dict[str, object]:
     }
 
 
+def failed_status_payload() -> dict[str, object]:
+    payload = status_payload("failed")
+    status = payload["entry"][0]["changes"][0]["value"]["statuses"][0]  # type: ignore[index]
+    status["errors"] = [
+        {
+            "code": 131031,
+            "message": "Business Account locked",
+            "error_data": {"details": "Business account has been locked."},
+        }
+    ]
+    return payload
+
+
 def sign(raw_body: bytes) -> str:
     digest = hmac.new(APP_SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
     return f"sha256={digest}"
@@ -123,6 +141,18 @@ def test_ignores_a_delivery_status(
 
     assert extract_text_messages(payload) == []
     assert post_signed(payload) == 200
+
+
+def test_extracts_a_failed_delivery_without_recipient_data() -> None:
+    failures = extract_failed_deliveries(failed_status_payload())
+
+    assert failures == [
+        FailedDelivery(
+            message_id="wamid.outbound-1",
+            error_code="131031",
+            detail="Business account has been locked.",
+        )
+    ]
 
 
 def test_ignores_an_unsupported_message_type(
