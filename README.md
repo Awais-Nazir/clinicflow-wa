@@ -63,6 +63,10 @@ The application accepts the verification request only when `hub.mode` is
 `subscribe` and `hub.verify_token` matches that environment variable. It then
 returns `hub.challenge` as plain text.
 
+For POST event notifications, the application reads the original request bytes
+and validates `X-Hub-Signature-256` with `META_APP_SECRET` before parsing JSON.
+Unsigned or incorrectly signed requests receive `401 Unauthorized`.
+
 ## Configuration
 
 Copy `.env.example` to `.env` for local development. Never commit `.env` or
