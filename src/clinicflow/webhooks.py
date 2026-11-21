@@ -9,8 +9,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
+from starlette.concurrency import run_in_threadpool
 
 from clinicflow.events import extract_text_messages
+from clinicflow.inbox import enqueue_text_messages
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -88,5 +90,8 @@ async def receive_whatsapp_webhook(
             detail="Invalid JSON payload",
         ) from error
 
-    extract_text_messages(payload)
+    messages = extract_text_messages(payload)
+    if messages and isinstance(payload, dict):
+        await run_in_threadpool(enqueue_text_messages, messages, payload)
+
     return Response(status_code=status.HTTP_200_OK)

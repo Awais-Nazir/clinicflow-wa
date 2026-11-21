@@ -50,6 +50,20 @@ Run the automated tests:
 uv run pytest
 ```
 
+## Local PostgreSQL
+
+Start the Compose-managed PostgreSQL 18 container:
+
+```powershell
+docker compose up -d postgres
+$env:DATABASE_URL = "postgresql+psycopg://clinicflow:clinicflow@127.0.0.1:5433/clinicflow"
+uv run alembic upgrade head
+```
+
+The database is bound to `127.0.0.1:5433` and persists in the
+`clinicflow-postgres-data` Docker volume. `docker compose down` stops the
+container without deleting that data.
+
 ## Webhook verification
 
 Meta verifies a webhook URL with a GET request before it sends message events.
@@ -71,6 +85,10 @@ After authentication, text message events are reduced to the message ID, sender
 ID, receiving phone-number ID, timestamp, and text needed by the future inbox.
 Delivery/read statuses and unsupported message types are acknowledged with
 `200 OK` but produce no work.
+
+Supported messages are inserted into `inbox_messages`. Its unique Meta message
+ID constraint and PostgreSQL `ON CONFLICT DO NOTHING` make repeated webhook
+deliveries idempotent.
 
 ## Configuration
 
