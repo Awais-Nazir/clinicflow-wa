@@ -67,6 +67,11 @@ For POST event notifications, the application reads the original request bytes
 and validates `X-Hub-Signature-256` with `META_APP_SECRET` before parsing JSON.
 Unsigned or incorrectly signed requests receive `401 Unauthorized`.
 
+After authentication, text message events are reduced to the message ID, sender
+ID, receiving phone-number ID, timestamp, and text needed by the future inbox.
+Delivery/read statuses and unsupported message types are acknowledged with
+`200 OK` but produce no work.
+
 ## Configuration
 
 Copy `.env.example` to `.env` for local development. Never commit `.env` or

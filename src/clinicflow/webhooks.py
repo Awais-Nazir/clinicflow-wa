@@ -10,6 +10,8 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 
+from clinicflow.events import extract_text_messages
+
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
@@ -79,11 +81,12 @@ async def receive_whatsapp_webhook(
         )
 
     try:
-        json.loads(raw_body)
+        payload: object = json.loads(raw_body)
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON payload",
         ) from error
 
+    extract_text_messages(payload)
     return Response(status_code=status.HTTP_200_OK)

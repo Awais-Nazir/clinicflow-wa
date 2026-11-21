@@ -16,10 +16,10 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
    tests.
 3. ✅ **Webhook verification** — implement and test Meta's GET verification
    handshake.
-4. **Authenticated ingestion**
+4. ✅ **Authenticated ingestion**
    - ✅ **Signature verification** — authenticate POST requests using the raw
      body and `X-Hub-Signature-256`.
-   - **Event classification** — safely ignore status and unsupported events.
+   - ✅ **Event classification** — safely ignore status and unsupported events.
 5. **Durable inbox** — add PostgreSQL, SQLAlchemy, Alembic, and unique inbound
    message IDs.
 6. **Worker and outbox** — claim work safely, record outbound intent, send an
