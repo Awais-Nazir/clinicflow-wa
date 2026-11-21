@@ -63,8 +63,14 @@ def extract_text_messages(payload: object) -> list[InboundTextMessage]:
                     continue
 
                 message_id = _non_empty_string(message.get("id"))
-                sender_id = _non_empty_string(message.get("from_user_id"))
-                sender_id = sender_id or _non_empty_string(message.get("from"))
+                # Cloud API test-recipient allowlisting is based on the
+                # sender's E.164 phone number. Newer payloads can also include
+                # a business-scoped user ID, which is only a fallback when a
+                # phone number is unavailable (for example, username users).
+                sender_id = _non_empty_string(message.get("from"))
+                sender_id = sender_id or _non_empty_string(
+                    message.get("from_user_id")
+                )
                 timestamp = _non_empty_string(message.get("timestamp"))
                 text = _non_empty_string(text_object.get("body"))
 

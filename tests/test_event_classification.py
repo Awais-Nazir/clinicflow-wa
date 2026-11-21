@@ -96,7 +96,7 @@ def test_extracts_an_inbound_text_message() -> None:
     assert messages == [
         InboundTextMessage(
             message_id="wamid.message-1",
-            sender_id="US.123456789",
+            sender_id="15551234567",
             phone_number_id="phone-456",
             timestamp="1749416383",
             text="Clinic kab khulti hai?",
@@ -104,13 +104,13 @@ def test_extracts_an_inbound_text_message() -> None:
     ]
 
 
-def test_falls_back_to_phone_number_when_user_id_is_absent() -> None:
+def test_falls_back_to_user_id_when_phone_number_is_absent() -> None:
     message = text_message()
-    message.pop("from_user_id")
+    message.pop("from")
 
     messages = extract_text_messages(message_payload(message))
 
-    assert messages[0].sender_id == "15551234567"
+    assert messages[0].sender_id == "US.123456789"
 
 
 @pytest.mark.parametrize("delivery_status", ["delivered", "read"])
