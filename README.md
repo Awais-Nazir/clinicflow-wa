@@ -101,7 +101,13 @@ uv run python -m clinicflow.worker
 The worker claims pending inbox rows with PostgreSQL `FOR UPDATE SKIP LOCKED`,
 creates one durable `outbox_messages` row per inbound message, and marks the
 inbox row processed in the same transaction. Multiple workers can therefore
-poll safely without preparing the same reply twice.
+poll safely without preparing the same reply twice. It then sends pending
+outbox rows through Meta's versioned Graph API and records the returned
+WhatsApp message ID before considering the row sent.
+
+The worker requires `WHATSAPP_ACCESS_TOKEN`. `META_GRAPH_API_VERSION` defaults
+to the version documented in `.env.example`; keeping it explicit makes API
+upgrades deliberate.
 
 ## Configuration
 

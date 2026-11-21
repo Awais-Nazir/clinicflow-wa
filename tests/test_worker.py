@@ -6,7 +6,8 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import Engine, create_engine, text
 
-from clinicflow.worker import prepare_echo_batch
+from clinicflow.whatsapp import WhatsAppAPIError
+from clinicflow.worker import prepare_echo_batch, send_outbox_batch
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -115,3 +116,107 @@ def test_worker_skips_a_row_locked_by_another_worker(
         transaction.rollback()
 
     assert prepare_echo_batch() == 1
+
+
+class SuccessfulSender:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+
+    def send_text(
+        self,
+        *,
+        phone_number_id: str,
+        recipient_id: str,
+        body: str,
+    ) -> str:
+        self.calls.append(
+            {
+                "phone_number_id": phone_number_id,
+                "recipient_id": recipient_id,
+                "body": body,
+            }
+        )
+        return "wamid.sent-123"
+
+
+class FailingSender:
+    def send_text(
+        self,
+        *,
+        phone_number_id: str,
+        recipient_id: str,
+        body: str,
+    ) -> str:
+        raise WhatsAppAPIError("Meta rejected this message")
+
+
+def test_worker_sends_and_records_provider_message_id(
+    database_engine: Engine,
+) -> None:
+    insert_inbox_message(database_engine)
+    assert prepare_echo_batch() == 1
+    sender = SuccessfulSender()
+
+    result = send_outbox_batch(sender)
+
+    assert result.claimed == 1
+    assert result.sent == 1
+    assert result.failed == 0
+    assert sender.calls == [
+        {
+            "phone_number_id": "phone-456",
+            "recipient_id": "US.123456789",
+            "body": "Assalam-o-alaikum",
+        }
+    ]
+    assert send_outbox_batch(sender).claimed == 0
+
+    with database_engine.connect() as connection:
+        outbox = connection.execute(
+            text(
+                """
+                SELECT status, attempts, provider_message_id,
+                       sent_at IS NOT NULL AS was_sent, last_error
+                FROM outbox_messages
+                """
+            )
+        ).mappings().one()
+
+    assert outbox == {
+        "status": "sent",
+        "attempts": 1,
+        "provider_message_id": "wamid.sent-123",
+        "was_sent": True,
+        "last_error": None,
+    }
+
+
+def test_worker_preserves_a_failed_outbox_message(
+    database_engine: Engine,
+) -> None:
+    insert_inbox_message(database_engine)
+    assert prepare_echo_batch() == 1
+
+    result = send_outbox_batch(FailingSender())
+
+    assert result.claimed == 1
+    assert result.sent == 0
+    assert result.failed == 1
+
+    with database_engine.connect() as connection:
+        outbox = connection.execute(
+            text(
+                """
+                SELECT status, attempts, provider_message_id, sent_at, last_error
+                FROM outbox_messages
+                """
+            )
+        ).mappings().one()
+
+    assert outbox == {
+        "status": "failed",
+        "attempts": 1,
+        "provider_message_id": None,
+        "sent_at": None,
+        "last_error": "Meta rejected this message",
+    }

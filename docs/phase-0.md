@@ -25,8 +25,8 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
 6. 🚧 **Worker and outbox**
    - ✅ **Prepare outbound intent** — claim inbox rows with `SKIP LOCKED` and
      atomically record one durable echo per inbound message.
-   - **Send outbound intent** — call the Graph API and record the resulting
-     WhatsApp message ID.
+   - ✅ **Send outbound intent** — call the Graph API and record the resulting
+     WhatsApp message ID, while preserving rejected messages for inspection.
    - **Recover safely** — retry failures without losing queued messages.
 7. **Meta connection** — configure the test number, webhook subscription, and
    credentials.
