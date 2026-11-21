@@ -155,6 +155,21 @@ class SuccessfulSender:
         return "wamid.sent-123"
 
 
+def test_restart_after_prepare_keeps_echo_sendable(
+    database_engine: Engine,
+) -> None:
+    """A committed outbox intent survives the boundary between worker runs."""
+
+    insert_inbox_message(database_engine)
+    assert prepare_echo_batch() == 1
+
+    sender = SuccessfulSender()
+    result = send_outbox_batch(sender)
+
+    assert result.sent == 1
+    assert sender.calls[0]["body"] == "Assalam-o-alaikum"
+
+
 class FailingSender:
     def send_text(
         self,

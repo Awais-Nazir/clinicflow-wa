@@ -22,25 +22,27 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
    - ✅ **Event classification** — safely ignore status and unsupported events.
 5. ✅ **Durable inbox** — add PostgreSQL, SQLAlchemy, Alembic, and unique
    inbound message IDs.
-6. 🚧 **Worker and outbox**
+6. ✅ **Worker and outbox**
    - ✅ **Prepare outbound intent** — claim inbox rows with `SKIP LOCKED` and
      atomically record one durable echo per inbound message.
    - ✅ **Send outbound intent** — call the Graph API and record the resulting
      WhatsApp message ID, while preserving rejected messages for inspection.
    - ✅ **Recover safely** — retry safe failures with capped backoff and
      quarantine ambiguous sends rather than risk a duplicate reply.
-7. **Meta connection** — configure the test number, webhook subscription, and
-   credentials.
-8. 🚧 **Heroku deployment**
+7. ✅ **Meta connection** — configured the test number, webhook subscription,
+   and credentials.
+8. ✅ **Heroku deployment**
    - ✅ **Process definitions** — pin Python 3.12 and define release, web, and
      worker commands for Heroku's native uv build.
    - ✅ **Provision and deploy** — deploy the Eco web process, provision
      Essential-0 Postgres, apply migrations, and verify the public health
      endpoint at `https://clinicflow.awaisnazir.tech/health`.
-   - **Activate worker** — configure Meta secrets, scale the Eco worker to one,
-     and verify an outbound send.
-9. **Acceptance checks** — exercise duplicate payloads, bad signatures,
-   restarts, and delivered/read status events.
+   - ✅ **Activate worker** — configured Meta secrets, temporarily scaled the
+     Eco worker to one, and verified the live echo. The worker can remain at
+     zero between development sessions to conserve Eco hours.
+9. ✅ **Acceptance checks** — verified duplicate payloads produce one outbound
+   intent, bad signatures return 401, committed work survives a worker restart,
+   and delivered/read status events are ignored safely.
 
 Each checkpoint should leave the repository runnable or verifiable before the
 next one begins.

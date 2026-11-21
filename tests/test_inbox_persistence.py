@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, text
 
 from clinicflow.main import app
+from clinicflow.worker import prepare_echo_batch
 
 APP_SECRET = "test-app-secret"
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -96,6 +97,8 @@ def test_duplicate_webhook_creates_one_inbox_row(
 
     assert first_response.status_code == 200
     assert duplicate_response.status_code == 200
+    assert prepare_echo_batch() == 1
+    assert prepare_echo_batch() == 0
 
     with database_engine.connect() as connection:
         row = connection.execute(
@@ -109,10 +112,14 @@ def test_duplicate_webhook_creates_one_inbox_row(
                 """
             )
         ).mappings().one()
+        outbox_count = connection.execute(
+            text("SELECT count(*) FROM outbox_messages")
+        ).scalar_one()
 
     assert row == {
         "message_count": 1,
         "message_id": "wamid.duplicate-test",
-        "sender_id": "US.123456789",
-        "status": "pending",
+        "sender_id": "15551234567",
+        "status": "processed",
     }
+    assert outbox_count == 1
