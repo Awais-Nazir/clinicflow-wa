@@ -22,8 +22,12 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
    - ✅ **Event classification** — safely ignore status and unsupported events.
 5. ✅ **Durable inbox** — add PostgreSQL, SQLAlchemy, Alembic, and unique
    inbound message IDs.
-6. **Worker and outbox** — claim work safely, record outbound intent, send an
-   echo, and recover from restarts.
+6. 🚧 **Worker and outbox**
+   - ✅ **Prepare outbound intent** — claim inbox rows with `SKIP LOCKED` and
+     atomically record one durable echo per inbound message.
+   - **Send outbound intent** — call the Graph API and record the resulting
+     WhatsApp message ID.
+   - **Recover safely** — retry failures without losing queued messages.
 7. **Meta connection** — configure the test number, webhook subscription, and
    credentials.
 8. **Heroku deployment** — add the web and worker process definitions, database,

@@ -90,6 +90,19 @@ Supported messages are inserted into `inbox_messages`. Its unique Meta message
 ID constraint and PostgreSQL `ON CONFLICT DO NOTHING` make repeated webhook
 deliveries idempotent.
 
+## Worker
+
+Run the worker in a separate terminal with the same `DATABASE_URL`:
+
+```powershell
+uv run python -m clinicflow.worker
+```
+
+The worker claims pending inbox rows with PostgreSQL `FOR UPDATE SKIP LOCKED`,
+creates one durable `outbox_messages` row per inbound message, and marks the
+inbox row processed in the same transaction. Multiple workers can therefore
+poll safely without preparing the same reply twice.
+
 ## Configuration
 
 Copy `.env.example` to `.env` for local development. Never commit `.env` or

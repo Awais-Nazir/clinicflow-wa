@@ -29,7 +29,9 @@ def database_engine() -> Iterator[Engine]:
 
     engine = create_engine(DATABASE_URL)
     with engine.begin() as connection:
-        connection.execute(text("TRUNCATE TABLE inbox_messages RESTART IDENTITY"))
+        connection.execute(
+            text("TRUNCATE TABLE outbox_messages, inbox_messages RESTART IDENTITY")
+        )
 
     yield engine
     engine.dispose()
