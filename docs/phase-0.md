@@ -34,8 +34,11 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
 8. 🚧 **Heroku deployment**
    - ✅ **Process definitions** — pin Python 3.12 and define release, web, and
      worker commands for Heroku's native uv build.
-   - **Provision and deploy** — create the app and Postgres database, configure
-     secrets, deploy, and verify both process types.
+   - ✅ **Provision and deploy** — deploy the Eco web process, provision
+     Essential-0 Postgres, apply migrations, and verify the public health
+     endpoint.
+   - **Activate worker** — configure Meta secrets, scale the Eco worker to one,
+     and verify an outbound send.
 9. **Acceptance checks** — exercise duplicate payloads, bad signatures,
    restarts, and delivered/read status events.
 
