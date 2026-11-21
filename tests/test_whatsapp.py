@@ -3,7 +3,12 @@
 import httpx
 import pytest
 
-from clinicflow.whatsapp import WhatsAppAPIError, WhatsAppClient
+from clinicflow.whatsapp import (
+    WhatsAppClient,
+    WhatsAppRejectedError,
+    WhatsAppRetryableError,
+    WhatsAppUncertainError,
+)
 
 
 def test_send_text_posts_expected_graph_request() -> None:
@@ -52,7 +57,7 @@ def test_send_text_raises_sanitized_graph_error() -> None:
     client = WhatsAppClient("secret-token", http_client=http_client)
 
     with pytest.raises(
-        WhatsAppAPIError,
+        WhatsAppRejectedError,
         match=(
             "WhatsApp Graph API returned HTTP 401, code 190: "
             "Invalid OAuth access token"
@@ -76,7 +81,45 @@ def test_send_text_rejects_success_without_message_id() -> None:
     )
     client = WhatsAppClient("test-token", http_client=http_client)
 
-    with pytest.raises(WhatsAppAPIError, match="did not contain a message ID"):
+    with pytest.raises(WhatsAppUncertainError, match="did not contain a message ID"):
+        client.send_text(
+            phone_number_id="phone-456",
+            recipient_id="US.123456789",
+            body="Hello",
+        )
+
+    http_client.close()
+
+
+def test_send_text_classifies_server_error_as_retryable() -> None:
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                503,
+                json={"error": {"message": "Try again", "code": 131000}},
+            )
+        )
+    )
+    client = WhatsAppClient("test-token", http_client=http_client)
+
+    with pytest.raises(WhatsAppRetryableError, match="HTTP 503"):
+        client.send_text(
+            phone_number_id="phone-456",
+            recipient_id="US.123456789",
+            body="Hello",
+        )
+
+    http_client.close()
+
+
+def test_send_text_classifies_read_timeout_as_uncertain() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("No response", request=request)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = WhatsAppClient("test-token", http_client=http_client)
+
+    with pytest.raises(WhatsAppUncertainError, match="unknown delivery outcome"):
         client.send_text(
             phone_number_id="phone-456",
             recipient_id="US.123456789",

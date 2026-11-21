@@ -15,6 +15,18 @@ class WhatsAppAPIError(RuntimeError):
     """Raised when Meta cannot accept or confirm an outbound message."""
 
 
+class WhatsAppRetryableError(WhatsAppAPIError):
+    """A send failed before acceptance or received a retryable response."""
+
+
+class WhatsAppRejectedError(WhatsAppAPIError):
+    """Meta definitively rejected the outbound message."""
+
+
+class WhatsAppUncertainError(WhatsAppAPIError):
+    """The request may have succeeded, so an automatic retry is unsafe."""
+
+
 class WhatsAppClient:
     """Send WhatsApp messages through Meta's versioned Graph API."""
 
@@ -86,22 +98,33 @@ class WhatsAppClient:
                 },
                 json=payload,
             )
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            raise WhatsAppRetryableError(
+                "Could not connect to the WhatsApp Graph API"
+            ) from exc
         except httpx.RequestError as exc:
-            raise WhatsAppAPIError("Could not reach the WhatsApp Graph API") from exc
+            raise WhatsAppUncertainError(
+                "WhatsApp Graph API request ended with an unknown delivery outcome"
+            ) from exc
 
         if response.is_error:
-            raise WhatsAppAPIError(_format_graph_error(response))
+            error_message = _format_graph_error(response)
+            if response.status_code == 408 or response.status_code == 429:
+                raise WhatsAppRetryableError(error_message)
+            if response.status_code >= 500:
+                raise WhatsAppRetryableError(error_message)
+            raise WhatsAppRejectedError(error_message)
 
         try:
             response_data = response.json()
             provider_message_id = response_data["messages"][0]["id"]
         except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise WhatsAppAPIError(
+            raise WhatsAppUncertainError(
                 "WhatsApp Graph API response did not contain a message ID"
             ) from exc
 
         if not isinstance(provider_message_id, str) or not provider_message_id:
-            raise WhatsAppAPIError(
+            raise WhatsAppUncertainError(
                 "WhatsApp Graph API returned an invalid message ID"
             )
 

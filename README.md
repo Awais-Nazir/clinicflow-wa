@@ -109,6 +109,13 @@ The worker requires `WHATSAPP_ACCESS_TOKEN`. `META_GRAPH_API_VERSION` defaults
 to the version documented in `.env.example`; keeping it explicit makes API
 upgrades deliberate.
 
+Temporary failures that are known to be safe to retry use capped exponential
+backoff. A timeout while reading Meta's response—or a worker restart during an
+active send—has an ambiguous delivery result, so the row becomes `uncertain`
+instead of being automatically resent and potentially producing a duplicate.
+The retry limit, backoff, and stale-send window are configurable through the
+worker variables in `.env.example`.
+
 ## Configuration
 
 Copy `.env.example` to `.env` for local development. Never commit `.env` or

@@ -2,12 +2,22 @@
 
 import os
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
 
-from clinicflow.whatsapp import WhatsAppAPIError
-from clinicflow.worker import prepare_echo_batch, send_outbox_batch
+from clinicflow.whatsapp import (
+    WhatsAppAPIError,
+    WhatsAppRetryableError,
+    WhatsAppUncertainError,
+)
+from clinicflow.worker import (
+    STALE_SEND_ERROR,
+    prepare_echo_batch,
+    recover_stale_sends,
+    send_outbox_batch,
+)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -32,7 +42,12 @@ def database_engine() -> Iterator[Engine]:
     engine.dispose()
 
 
-def insert_inbox_message(engine: Engine) -> int:
+def insert_inbox_message(
+    engine: Engine,
+    *,
+    message_id: str = "wamid.worker-test",
+    body: str = "Assalam-o-alaikum",
+) -> int:
     with engine.begin() as connection:
         return connection.execute(
             text(
@@ -47,17 +62,18 @@ def insert_inbox_message(engine: Engine) -> int:
                     payload
                 )
                 VALUES (
-                    'wamid.worker-test',
+                    :message_id,
                     'phone-456',
                     'US.123456789',
                     'text',
-                    'Assalam-o-alaikum',
+                    :body,
                     now(),
                     '{}'::jsonb
                 )
                 RETURNING id
                 """
-            )
+            ),
+            {"message_id": message_id, "body": body},
         ).scalar_one()
 
 
@@ -161,7 +177,9 @@ def test_worker_sends_and_records_provider_message_id(
 
     assert result.claimed == 1
     assert result.sent == 1
+    assert result.retrying == 0
     assert result.failed == 0
+    assert result.uncertain == 0
     assert sender.calls == [
         {
             "phone_number_id": "phone-456",
@@ -201,7 +219,9 @@ def test_worker_preserves_a_failed_outbox_message(
 
     assert result.claimed == 1
     assert result.sent == 0
+    assert result.retrying == 0
     assert result.failed == 1
+    assert result.uncertain == 0
 
     with database_engine.connect() as connection:
         outbox = connection.execute(
@@ -220,3 +240,191 @@ def test_worker_preserves_a_failed_outbox_message(
         "sent_at": None,
         "last_error": "Meta rejected this message",
     }
+
+
+class RetryableSender:
+    def send_text(
+        self,
+        *,
+        phone_number_id: str,
+        recipient_id: str,
+        body: str,
+    ) -> str:
+        raise WhatsAppRetryableError("Meta is temporarily unavailable")
+
+
+class UncertainSender:
+    def send_text(
+        self,
+        *,
+        phone_number_id: str,
+        recipient_id: str,
+        body: str,
+    ) -> str:
+        raise WhatsAppUncertainError("The response timed out")
+
+
+class CrashingSender:
+    def send_text(
+        self,
+        *,
+        phone_number_id: str,
+        recipient_id: str,
+        body: str,
+    ) -> str:
+        raise RuntimeError("Worker stopped unexpectedly")
+
+
+def test_worker_retries_safe_failure_with_backoff(database_engine: Engine) -> None:
+    insert_inbox_message(database_engine)
+    assert prepare_echo_batch() == 1
+
+    result = send_outbox_batch(
+        RetryableSender(),
+        max_attempts=3,
+        retry_base_seconds=60,
+    )
+
+    assert result.retrying == 1
+    assert result.failed == 0
+    assert send_outbox_batch(SuccessfulSender()).claimed == 0
+
+    with database_engine.connect() as connection:
+        outbox = connection.execute(
+            text(
+                """
+                SELECT status, attempts, next_attempt_at > now() AS waits_to_retry,
+                       claimed_at, last_error
+                FROM outbox_messages
+                """
+            )
+        ).mappings().one()
+
+    assert outbox == {
+        "status": "pending",
+        "attempts": 1,
+        "waits_to_retry": True,
+        "claimed_at": None,
+        "last_error": "Meta is temporarily unavailable",
+    }
+
+
+def test_worker_stops_retrying_at_attempt_limit(database_engine: Engine) -> None:
+    insert_inbox_message(database_engine)
+    assert prepare_echo_batch() == 1
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE outbox_messages SET attempts = 2")
+        )
+
+    result = send_outbox_batch(
+        RetryableSender(),
+        max_attempts=3,
+        retry_base_seconds=0,
+    )
+
+    assert result.retrying == 0
+    assert result.failed == 1
+    with database_engine.connect() as connection:
+        outbox = connection.execute(
+            text(
+                """
+                SELECT status, attempts, next_attempt_at, claimed_at
+                FROM outbox_messages
+                """
+            )
+        ).mappings().one()
+
+    assert outbox == {
+        "status": "failed",
+        "attempts": 3,
+        "next_attempt_at": None,
+        "claimed_at": None,
+    }
+
+
+def test_worker_quarantines_uncertain_send(database_engine: Engine) -> None:
+    insert_inbox_message(database_engine)
+    assert prepare_echo_batch() == 1
+
+    result = send_outbox_batch(UncertainSender())
+
+    assert result.uncertain == 1
+    assert result.retrying == 0
+    with database_engine.connect() as connection:
+        outbox = connection.execute(
+            text(
+                """
+                SELECT status, attempts, next_attempt_at, claimed_at, last_error
+                FROM outbox_messages
+                """
+            )
+        ).mappings().one()
+
+    assert outbox == {
+        "status": "uncertain",
+        "attempts": 1,
+        "next_attempt_at": None,
+        "claimed_at": None,
+        "last_error": "The response timed out",
+    }
+
+
+def test_worker_recovers_stale_sending_row_as_uncertain(
+    database_engine: Engine,
+) -> None:
+    insert_inbox_message(database_engine)
+    assert prepare_echo_batch() == 1
+    old_claim = datetime.now(timezone.utc) - timedelta(minutes=10)
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE outbox_messages
+                SET status = 'sending', claimed_at = :old_claim
+                """
+            ),
+            {"old_claim": old_claim},
+        )
+
+    assert recover_stale_sends(stale_after_seconds=300) == 1
+    assert recover_stale_sends(stale_after_seconds=300) == 0
+
+    with database_engine.connect() as connection:
+        outbox = connection.execute(
+            text(
+                """
+                SELECT status, claimed_at, next_attempt_at, last_error
+                FROM outbox_messages
+                """
+            )
+        ).mappings().one()
+
+    assert outbox == {
+        "status": "uncertain",
+        "claimed_at": None,
+        "next_attempt_at": None,
+        "last_error": STALE_SEND_ERROR,
+    }
+
+
+def test_worker_claims_only_the_message_it_is_about_to_send(
+    database_engine: Engine,
+) -> None:
+    insert_inbox_message(database_engine)
+    insert_inbox_message(
+        database_engine,
+        message_id="wamid.worker-test-2",
+        body="Second message",
+    )
+    assert prepare_echo_batch() == 2
+
+    with pytest.raises(RuntimeError, match="stopped unexpectedly"):
+        send_outbox_batch(CrashingSender())
+
+    with database_engine.connect() as connection:
+        statuses = connection.execute(
+            text("SELECT status FROM outbox_messages ORDER BY id")
+        ).scalars().all()
+
+    assert statuses == ["sending", "pending"]

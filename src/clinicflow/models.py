@@ -87,6 +87,8 @@ class OutboxMessage(Base):
     )
     attempts: Mapped[int] = mapped_column(nullable=False, server_default="0")
     provider_message_id: Mapped[str | None] = mapped_column(Text)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -27,7 +27,8 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
      atomically record one durable echo per inbound message.
    - ✅ **Send outbound intent** — call the Graph API and record the resulting
      WhatsApp message ID, while preserving rejected messages for inspection.
-   - **Recover safely** — retry failures without losing queued messages.
+   - ✅ **Recover safely** — retry safe failures with capped backoff and
+     quarantine ambiguous sends rather than risk a duplicate reply.
 7. **Meta connection** — configure the test number, webhook subscription, and
    credentials.
 8. **Heroku deployment** — add the web and worker process definitions, database,
