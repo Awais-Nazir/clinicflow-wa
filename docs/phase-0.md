@@ -36,7 +36,7 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
      worker commands for Heroku's native uv build.
    - ✅ **Provision and deploy** — deploy the Eco web process, provision
      Essential-0 Postgres, apply migrations, and verify the public health
-     endpoint.
+     endpoint at `https://clinicflow.awaisnazir.tech/health`.
    - **Activate worker** — configure Meta secrets, scale the Eco worker to one,
      and verify an outbound send.
 9. **Acceptance checks** — exercise duplicate payloads, bad signatures,

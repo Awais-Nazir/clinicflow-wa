@@ -131,9 +131,11 @@ shown in `.env.example`. Keep all real tokens in Heroku config vars, never in
 the repository.
 
 The Phase 0 development deployment is available at
-[`clinicflow-wa-awais.herokuapp.com`](https://clinicflow-wa-awais-032e26dcbd8d.herokuapp.com/health).
-It uses an Eco web dyno and Essential-0 PostgreSQL. The worker stays scaled to
-zero until the Meta access token and webhook credentials are configured.
+[`clinicflow.awaisnazir.tech`](https://clinicflow.awaisnazir.tech/health). The
+custom domain points to Heroku and uses an automatically managed HTTPS
+certificate. The deployment uses an Eco web dyno and Essential-0 PostgreSQL.
+The worker stays scaled to zero until the Meta access token and webhook
+credentials are configured.
 
 ## Configuration
 
