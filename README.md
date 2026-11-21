@@ -50,6 +50,19 @@ Run the automated tests:
 uv run pytest
 ```
 
+## Webhook verification
+
+Meta verifies a webhook URL with a GET request before it sends message events.
+Set a local verification token before trying the endpoint:
+
+```powershell
+$env:META_VERIFY_TOKEN = "choose-a-long-random-value"
+```
+
+The application accepts the verification request only when `hub.mode` is
+`subscribe` and `hub.verify_token` matches that environment variable. It then
+returns `hub.challenge` as plain text.
+
 ## Configuration
 
 Copy `.env.example` to `.env` for local development. Never commit `.env` or

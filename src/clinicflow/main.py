@@ -2,10 +2,14 @@
 
 from fastapi import FastAPI
 
+from clinicflow.webhooks import router as webhook_router
+
 app = FastAPI(
     title="ClinicFlow WA",
     version="0.1.0",
 )
+
+app.include_router(webhook_router)
 
 
 @app.get("/health", tags=["system"])
