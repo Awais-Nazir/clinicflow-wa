@@ -116,6 +116,20 @@ instead of being automatically resent and potentially producing a duplicate.
 The retry limit, backoff, and stale-send window are configurable through the
 worker variables in `.env.example`.
 
+## Heroku deployment
+
+Heroku uses the committed `uv.lock` and `.python-version` files to install the
+locked production dependencies on Python 3.12. The `Procfile` declares three
+processes:
+
+- `release` applies Alembic migrations before a release becomes active.
+- `web` serves FastAPI on Heroku's assigned `$PORT`.
+- `worker` processes the durable inbox and outbox queues.
+
+The deployment requires a Heroku Postgres attachment plus the Meta variables
+shown in `.env.example`. Keep all real tokens in Heroku config vars, never in
+the repository.
+
 ## Configuration
 
 Copy `.env.example` to `.env` for local development. Never commit `.env` or

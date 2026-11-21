@@ -31,8 +31,11 @@ WhatsApp webhook -> inbox row -> worker -> outbound message -> echo reply
      quarantine ambiguous sends rather than risk a duplicate reply.
 7. **Meta connection** — configure the test number, webhook subscription, and
    credentials.
-8. **Heroku deployment** — add the web and worker process definitions, database,
-   migrations, and config vars.
+8. 🚧 **Heroku deployment**
+   - ✅ **Process definitions** — pin Python 3.12 and define release, web, and
+     worker commands for Heroku's native uv build.
+   - **Provision and deploy** — create the app and Postgres database, configure
+     secrets, deploy, and verify both process types.
 9. **Acceptance checks** — exercise duplicate payloads, bad signatures,
    restarts, and delivered/read status events.
 
