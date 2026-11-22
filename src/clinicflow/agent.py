@@ -1,6 +1,7 @@
 """Provider-independent orchestration for the grounded clinic FAQ agent."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from decimal import Decimal
 import json
 import re
 from time import perf_counter
@@ -15,6 +16,7 @@ policies, or medical claims. If the answer is absent, say you do not know based
 on the clinic's available information. Reply in the same language and script as
 the customer. Do not diagnose conditions or recommend treatment.
 """
+PROMPT_VERSION = "faq-v1"
 MAX_MODEL_ROUNDS = 4
 MAX_TOOL_CALLS = 8
 
@@ -42,6 +44,7 @@ class AgentMessage:
 class TokenUsage:
     input_tokens: int = 0
     output_tokens: int = 0
+    cost_usd: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -82,8 +85,10 @@ class AgentRunResult:
     tool_events: tuple[ToolEvent, ...]
     input_tokens: int
     output_tokens: int
+    cost_usd: Decimal
     latency_ms: int
     used_fallback: bool
+    trace_id: int | None = None
 
 
 def detect_reply_language(text: str) -> ReplyLanguage:
@@ -128,6 +133,8 @@ def run_faq_agent(
     tenant_id: int,
     model: AgentModel,
     toolbox: ClinicToolbox | None = None,
+    conversation_id: int | None = None,
+    persist_trace: bool = True,
 ) -> AgentRunResult:
     """Run a bounded tool-use loop and return a trace-ready result."""
 
@@ -144,6 +151,7 @@ def run_faq_agent(
     tool_events: list[ToolEvent] = []
     input_tokens = 0
     output_tokens = 0
+    cost_usd = Decimal("0")
     has_evidence = False
     run_started = perf_counter()
 
@@ -151,6 +159,7 @@ def run_faq_agent(
         turn = model.complete(tuple(messages), active_toolbox.definitions())
         input_tokens += turn.usage.input_tokens
         output_tokens += turn.usage.output_tokens
+        cost_usd += turn.usage.cost_usd
 
         if turn.tool_calls:
             if len(tool_events) + len(turn.tool_calls) > MAX_TOOL_CALLS:
@@ -203,27 +212,43 @@ def run_faq_agent(
             continue
 
         if turn.text and turn.text.strip() and has_evidence:
-            return _result(
+            result = _result(
                 reply=turn.text.strip(),
                 language=language,
                 model=model,
                 tool_events=tool_events,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                cost_usd=cost_usd,
                 run_started=run_started,
                 used_fallback=False,
             )
+            return _persist_result(
+                result=result,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                question=normalized_question,
+                persist_trace=persist_trace,
+            )
         break
 
-    return _result(
+    result = _result(
         reply=fallback_reply(language),
         language=language,
         model=model,
         tool_events=tool_events,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cost_usd=cost_usd,
         run_started=run_started,
         used_fallback=True,
+    )
+    return _persist_result(
+        result=result,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        question=normalized_question,
+        persist_trace=persist_trace,
     )
 
 
@@ -247,6 +272,7 @@ def _result(
     tool_events: list[ToolEvent],
     input_tokens: int,
     output_tokens: int,
+    cost_usd: Decimal,
     run_started: float,
     used_fallback: bool,
 ) -> AgentRunResult:
@@ -257,6 +283,30 @@ def _result(
         tool_events=tuple(tool_events),
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cost_usd=cost_usd,
         latency_ms=round((perf_counter() - run_started) * 1000),
         used_fallback=used_fallback,
     )
+
+
+def _persist_result(
+    *,
+    result: AgentRunResult,
+    tenant_id: int,
+    conversation_id: int | None,
+    question: str,
+    persist_trace: bool,
+) -> AgentRunResult:
+    if not persist_trace:
+        return result
+
+    from clinicflow.agent_traces import save_agent_run
+
+    trace_id = save_agent_run(
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        prompt_version=PROMPT_VERSION,
+        question=question,
+        result=result,
+    )
+    return replace(result, trace_id=trace_id)

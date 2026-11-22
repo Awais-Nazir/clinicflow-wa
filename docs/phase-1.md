@@ -38,15 +38,15 @@ provider-independent so this change does not affect tenant or retrieval logic.
      and retrieve them with tenant-filtered PostgreSQL full-text search.
    - ✅ **Hybrid retrieval** — add swappable embeddings and combine exact
      cosine similarity with lexical ranking using Reciprocal Rank Fusion.
-5. 🚧 **Grounded tools and agent**
+5. ✅ **Grounded tools and agent**
    - ✅ **Tenant-bound tools** — expose `get_services`, `get_clinic_info`,
      and `search_kb`; application code injects the tenant ID and model-supplied
      tenant overrides are rejected.
    - ✅ **Agent orchestration** — use a provider-independent, bounded tool loop
      with a free scripted model in tests and a same-language deterministic
      fallback when no grounding evidence is available.
-   - **Run traces** — persist tool calls, tokens, latency, model, and cost for
-     each agent run.
+   - ✅ **Run traces** — persist tenant-scoped tool calls, tokens, latency,
+     model, prompt version, fallback status, and exact USD cost for each run.
 6. **Numeric grounding check** — reject replies containing prices or numbers
    absent from tool results.
 7. **Evaluation runner** — add about 25 answerable, unanswerable, and multilingual

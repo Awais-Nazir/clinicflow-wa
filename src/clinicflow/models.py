@@ -350,6 +350,75 @@ class ConversationMessage(Base):
     )
 
 
+class AgentRun(Base):
+    """A durable explanation of one FAQ-agent execution."""
+
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id"],
+            ["conversations.id", "conversations.tenant_id"],
+            name="fk_agent_runs_conversation_tenant",
+        ),
+        CheckConstraint(
+            "status IN ('completed', 'fallback')",
+            name="ck_agent_runs_status",
+        ),
+        CheckConstraint(
+            "input_tokens >= 0 AND output_tokens >= 0 AND "
+            "latency_ms >= 0 AND cost_usd >= 0",
+            name="ck_agent_runs_nonnegative_metrics",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
+    conversation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        index=True,
+    )
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    reply: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_events: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+    )
+    input_tokens: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+    latency_ms: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+    cost_usd: Mapped[Decimal] = mapped_column(
+        Numeric(14, 8),
+        nullable=False,
+        server_default="0",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class InboxMessage(Base):
     """A durable, uniquely identified inbound WhatsApp message."""
 
