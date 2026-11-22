@@ -1,12 +1,28 @@
 """Tenant-scoped access to structured clinic facts."""
 
 from dataclasses import dataclass
+from datetime import time
 from decimal import Decimal
 
 from sqlalchemy import select
 
 from clinicflow.database import session_scope
-from clinicflow.models import ClinicProfile, ClinicService
+from clinicflow.models import (
+    ClinicOpeningHours,
+    ClinicProfile,
+    ClinicService,
+    Doctor,
+)
+
+WEEKDAY_NAMES = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +42,22 @@ class ServiceInfo:
     price_amount: Decimal | None
     currency: str
     duration_minutes: int | None
+
+
+@dataclass(frozen=True)
+class OpeningHoursInfo:
+    weekday: int
+    day_name: str
+    is_closed: bool
+    opens_at: time | None
+    closes_at: time | None
+
+
+@dataclass(frozen=True)
+class DoctorInfo:
+    name: str
+    specialty: str
+    bio: str
 
 
 def get_clinic_info(tenant_id: int) -> ClinicInfo | None:
@@ -85,5 +117,52 @@ def get_services(tenant_id: int) -> list[ServiceInfo]:
             currency=row.currency,
             duration_minutes=row.duration_minutes,
         )
+        for row in rows
+    ]
+
+
+def get_opening_hours(tenant_id: int) -> list[OpeningHoursInfo]:
+    """Return the regular weekly schedule for the supplied tenant."""
+
+    statement = (
+        select(
+            ClinicOpeningHours.weekday,
+            ClinicOpeningHours.is_closed,
+            ClinicOpeningHours.opens_at,
+            ClinicOpeningHours.closes_at,
+        )
+        .where(ClinicOpeningHours.tenant_id == tenant_id)
+        .order_by(ClinicOpeningHours.weekday)
+    )
+
+    with session_scope() as session:
+        rows = session.execute(statement).all()
+
+    return [
+        OpeningHoursInfo(
+            weekday=row.weekday,
+            day_name=WEEKDAY_NAMES[row.weekday],
+            is_closed=row.is_closed,
+            opens_at=row.opens_at,
+            closes_at=row.closes_at,
+        )
+        for row in rows
+    ]
+
+
+def get_doctors(tenant_id: int) -> list[DoctorInfo]:
+    """Return active doctors scoped by an application-supplied tenant ID."""
+
+    statement = (
+        select(Doctor.name, Doctor.specialty, Doctor.bio)
+        .where(Doctor.tenant_id == tenant_id, Doctor.is_active.is_(True))
+        .order_by(Doctor.name)
+    )
+
+    with session_scope() as session:
+        rows = session.execute(statement).all()
+
+    return [
+        DoctorInfo(name=row.name, specialty=row.specialty, bio=row.bio)
         for row in rows
     ]

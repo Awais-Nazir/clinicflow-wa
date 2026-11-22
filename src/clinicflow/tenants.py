@@ -1,6 +1,7 @@
 """Tenant seeding and lookup by WhatsApp phone-number ID."""
 
 from dataclasses import dataclass
+from datetime import time
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -8,8 +9,10 @@ from sqlalchemy.dialects.postgresql import insert
 
 from clinicflow.database import session_scope
 from clinicflow.models import (
+    ClinicOpeningHours,
     ClinicProfile,
     ClinicService,
+    Doctor,
     Tenant,
     WhatsAppPhoneNumber,
 )
@@ -46,6 +49,34 @@ DEMO_SERVICES = (
         "price_amount": Decimal("3000.00"),
         "currency": "PKR",
         "duration_minutes": 30,
+    },
+)
+DEMO_OPENING_HOURS = tuple(
+    {
+        "weekday": weekday,
+        "is_closed": False,
+        "opens_at": time(10, 0),
+        "closes_at": time(19, 0),
+    }
+    for weekday in range(6)
+) + (
+    {
+        "weekday": 6,
+        "is_closed": True,
+        "opens_at": None,
+        "closes_at": None,
+    },
+)
+DEMO_DOCTORS = (
+    {
+        "name": "Dr. Hamza Ali",
+        "specialty": "General Physician",
+        "bio": "Provides general consultations at Noor Clinic (Demo).",
+    },
+    {
+        "name": "Dr. Sara Ahmed",
+        "specialty": "Dermatologist",
+        "bio": "Provides skin consultations at Noor Clinic (Demo).",
     },
 )
 
@@ -156,6 +187,32 @@ def seed_demo_clinic(
                         "price_amount": service["price_amount"],
                         "currency": service["currency"],
                         "duration_minutes": service["duration_minutes"],
+                        "is_active": True,
+                    },
+                )
+            )
+        for hours in DEMO_OPENING_HOURS:
+            session.execute(
+                insert(ClinicOpeningHours)
+                .values(tenant_id=tenant_id, **hours)
+                .on_conflict_do_update(
+                    constraint="uq_clinic_opening_hours_tenant_weekday",
+                    set_={
+                        "is_closed": hours["is_closed"],
+                        "opens_at": hours["opens_at"],
+                        "closes_at": hours["closes_at"],
+                    },
+                )
+            )
+        for doctor in DEMO_DOCTORS:
+            session.execute(
+                insert(Doctor)
+                .values(tenant_id=tenant_id, **doctor)
+                .on_conflict_do_update(
+                    constraint="uq_doctors_tenant_name",
+                    set_={
+                        "specialty": doctor["specialty"],
+                        "bio": doctor["bio"],
                         "is_active": True,
                     },
                 )

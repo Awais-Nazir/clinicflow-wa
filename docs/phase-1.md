@@ -15,10 +15,11 @@ incorrect medical, pricing, or schedule information.
 
 1. ✅ **Tenant foundation** — map a unique Meta `phone_number_id` to one
    clinic and provide an idempotent demo-clinic seed.
-2. 🚧 **Structured clinic facts**
+2. ✅ **Structured clinic facts**
    - ✅ **Profile and services** — add tenant-scoped contact details,
      services, prices, and durations.
-   - **Hours and doctors** — add weekly opening hours and doctor information.
+   - ✅ **Hours and doctors** — add weekly opening hours and doctor
+     information.
 3. **Conversation storage** — persist conversations, customer messages, and
    assistant messages within a tenant.
 4. **Knowledge base** — store policy and FAQ chunks and add tenant-isolated

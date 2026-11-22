@@ -1,18 +1,21 @@
 """SQLAlchemy persistence models."""
 
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
 )
@@ -130,6 +133,70 @@ class ClinicService(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+
+class ClinicOpeningHours(Base):
+    """A clinic's regular hours for one weekday, Monday zero through Sunday six."""
+
+    __tablename__ = "clinic_opening_hours"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "weekday",
+            name="uq_clinic_opening_hours_tenant_weekday",
+        ),
+        CheckConstraint(
+            "weekday >= 0 AND weekday <= 6",
+            name="ck_clinic_opening_hours_weekday",
+        ),
+        CheckConstraint(
+            "(is_closed AND opens_at IS NULL AND closes_at IS NULL) OR "
+            "(NOT is_closed AND opens_at IS NOT NULL AND "
+            "closes_at IS NOT NULL AND opens_at < closes_at)",
+            name="ck_clinic_opening_hours_valid_interval",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
+    weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    is_closed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    opens_at: Mapped[time | None] = mapped_column(Time)
+    closes_at: Mapped[time | None] = mapped_column(Time)
+
+
+class Doctor(Base):
+    """A doctor displayed by one clinic."""
+
+    __tablename__ = "doctors"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "name",
+            name="uq_doctors_tenant_name",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    specialty: Mapped[str] = mapped_column(String(160), nullable=False)
+    bio: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="true",
     )
 
 
