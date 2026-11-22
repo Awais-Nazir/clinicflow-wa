@@ -13,6 +13,7 @@ from clinicflow.models import (
     ClinicProfile,
     ClinicService,
     Doctor,
+    KnowledgeChunk,
     Tenant,
     WhatsAppPhoneNumber,
 )
@@ -77,6 +78,49 @@ DEMO_DOCTORS = (
         "name": "Dr. Sara Ahmed",
         "specialty": "Dermatologist",
         "bio": "Provides skin consultations at Noor Clinic (Demo).",
+    },
+)
+DEMO_KNOWLEDGE_CHUNKS = (
+    {
+        "source_key": "appointment-changes",
+        "title": "Cancellation and rescheduling",
+        "content": (
+            "You can cancel or reschedule an appointment at least 4 hours "
+            "before its start time. Later changes require clinic approval."
+        ),
+        "language": "en",
+        "chunk_index": 0,
+    },
+    {
+        "source_key": "payment-methods",
+        "title": "Payment methods",
+        "content": (
+            "Noor Clinic (Demo) accepts cash and major debit or credit cards "
+            "at reception. Online payment is not available."
+        ),
+        "language": "en",
+        "chunk_index": 0,
+    },
+    {
+        "source_key": "visitor-parking",
+        "title": "Visitor parking",
+        "content": (
+            "Free visitor parking is available in the demo building basement. "
+            "Ask reception for parking validation."
+        ),
+        "language": "en",
+        "chunk_index": 0,
+    },
+    {
+        "source_key": "medical-advice",
+        "title": "Medical advice on WhatsApp",
+        "content": (
+            "The WhatsApp assistant provides clinic information only. It "
+            "cannot diagnose conditions or recommend treatment; medical advice "
+            "requires a consultation with a doctor."
+        ),
+        "language": "en",
+        "chunk_index": 0,
     },
 )
 
@@ -214,6 +258,19 @@ def seed_demo_clinic(
                         "specialty": doctor["specialty"],
                         "bio": doctor["bio"],
                         "is_active": True,
+                    },
+                )
+            )
+        for chunk in DEMO_KNOWLEDGE_CHUNKS:
+            session.execute(
+                insert(KnowledgeChunk)
+                .values(tenant_id=tenant_id, **chunk)
+                .on_conflict_do_update(
+                    constraint="uq_knowledge_chunks_tenant_source_chunk",
+                    set_={
+                        "title": chunk["title"],
+                        "content": chunk["content"],
+                        "language": chunk["language"],
                     },
                 )
             )

@@ -7,10 +7,12 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    Index,
     Integer,
     Numeric,
     SmallInteger,
@@ -20,7 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -198,6 +200,59 @@ class Doctor(Base):
         Boolean,
         nullable=False,
         server_default="true",
+    )
+
+
+class KnowledgeChunk(Base):
+    """A tenant-owned FAQ or policy chunk available to retrieval."""
+
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "source_key",
+            "chunk_index",
+            name="uq_knowledge_chunks_tenant_source_chunk",
+        ),
+        Index(
+            "ix_knowledge_chunks_search_vector",
+            "search_vector",
+            postgresql_using="gin",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
+    source_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default="en",
+    )
+    chunk_index: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('simple'::regconfig, COALESCE(content, ''))",
+            persisted=True,
+        ),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
     )
 
 
