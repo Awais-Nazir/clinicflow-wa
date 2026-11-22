@@ -11,6 +11,14 @@ Phase 1 uses **Noor Clinic (Demo)**, a fictional clinic. This lets us design and
 test the system without copying real clinic claims or accidentally publishing
 incorrect medical, pricing, or schedule information.
 
+## Embedding strategy
+
+Development uses the zero-cost local `HashingEmbedder` baseline. Before the
+production-quality evaluation, we will replace it with OpenAI
+`text-embedding-3-small`, re-embed the knowledge chunks, and tune the hybrid
+retrieval threshold against the eval set. The embedding interface remains
+provider-independent so this change does not affect tenant or retrieval logic.
+
 ## Incremental checkpoints
 
 1. ✅ **Tenant foundation** — map a unique Meta `phone_number_id` to one
