@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Integer,
     Numeric,
@@ -197,6 +198,97 @@ class Doctor(Base):
         Boolean,
         nullable=False,
         server_default="true",
+    )
+
+
+class Conversation(Base):
+    """One customer's ongoing conversation with one tenant."""
+
+    __tablename__ = "conversations"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "customer_wa_id",
+            name="uq_conversations_tenant_customer",
+        ),
+        UniqueConstraint(
+            "id",
+            "tenant_id",
+            name="uq_conversations_id_tenant",
+        ),
+        CheckConstraint(
+            "status IN ('bot', 'human', 'closed')",
+            name="ck_conversations_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
+    customer_wa_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="bot",
+    )
+    last_message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class ConversationMessage(Base):
+    """A tenant-scoped inbound or outbound message in a conversation."""
+
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id"],
+            ["conversations.id", "conversations.tenant_id"],
+            name="fk_conversation_messages_conversation_tenant",
+        ),
+        UniqueConstraint(
+            "external_message_id",
+            name="uq_conversation_messages_external_message_id",
+        ),
+        CheckConstraint(
+            "direction IN ('inbound', 'outbound')",
+            name="ck_conversation_messages_direction",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        index=True,
+    )
+    external_message_id: Mapped[str | None] = mapped_column(Text)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    message_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
     )
 
 
