@@ -100,6 +100,8 @@ def test_completed_run_persists_full_tenant_scoped_trace(
     assert trace.prompt_version == "faq-v1"
     assert trace.model_name == "trace-test-model"
     assert trace.status == "completed"
+    assert trace.guardrail_reason is None
+    assert trace.unsupported_numbers == []
     assert trace.input_tokens == 36
     assert trace.output_tokens == 11
     assert trace.cost_usd == Decimal("0.000123")
@@ -122,6 +124,8 @@ def test_fallback_run_is_persisted(database_engine: Engine) -> None:
     trace = get_agent_run(tenant.id, result.trace_id)
     assert trace is not None
     assert trace.status == "fallback"
+    assert trace.guardrail_reason == "no_grounding_evidence"
+    assert trace.unsupported_numbers == []
     assert trace.conversation_id is None
     assert trace.tool_events == []
     assert trace.cost_usd == Decimal("0.000000")

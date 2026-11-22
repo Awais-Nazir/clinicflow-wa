@@ -47,8 +47,9 @@ provider-independent so this change does not affect tenant or retrieval logic.
      fallback when no grounding evidence is available.
    - ✅ **Run traces** — persist tenant-scoped tool calls, tokens, latency,
      model, prompt version, fallback status, and exact USD cost for each run.
-6. **Numeric grounding check** — reject replies containing prices or numbers
-   absent from tool results.
+6. ✅ **Numeric grounding check** — normalize ASCII and Urdu/Arabic digits,
+   then reject replies containing any price or number absent from tool results;
+   persist the rejection reason and unsupported values in the run trace.
 7. **Evaluation runner** — add about 25 answerable, unanswerable, and multilingual
    cases before expanding the agent.
 

@@ -22,6 +22,8 @@ class AgentRunTrace:
     prompt_version: str
     model_name: str
     status: str
+    guardrail_reason: str | None
+    unsupported_numbers: list[str]
     question: str
     reply: str
     tool_events: list[dict[str, object]]
@@ -60,6 +62,8 @@ def save_agent_run(
             prompt_version=prompt_version,
             model_name=result.model_name,
             status="fallback" if result.used_fallback else "completed",
+            guardrail_reason=result.guardrail_reason,
+            unsupported_numbers=list(result.unsupported_numbers),
             question=question,
             reply=result.reply,
             tool_events=serialized_events,
@@ -89,6 +93,8 @@ def get_agent_run(tenant_id: int, run_id: int) -> AgentRunTrace | None:
         AgentRun.prompt_version,
         AgentRun.model_name,
         AgentRun.status,
+        AgentRun.guardrail_reason,
+        AgentRun.unsupported_numbers,
         AgentRun.question,
         AgentRun.reply,
         AgentRun.tool_events,
@@ -110,6 +116,8 @@ def get_agent_run(tenant_id: int, run_id: int) -> AgentRunTrace | None:
         prompt_version=row.prompt_version,
         model_name=row.model_name,
         status=row.status,
+        guardrail_reason=row.guardrail_reason,
+        unsupported_numbers=row.unsupported_numbers,
         question=row.question,
         reply=row.reply,
         tool_events=row.tool_events,

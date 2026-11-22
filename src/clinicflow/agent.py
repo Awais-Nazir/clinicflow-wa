@@ -8,6 +8,7 @@ from time import perf_counter
 from typing import Literal, Protocol
 
 from clinicflow.agent_tools import ClinicToolbox, ToolExecutionError
+from clinicflow.grounding import check_numeric_grounding
 
 SYSTEM_PROMPT = """You are a clinic information assistant.
 Use the available tools before answering factual questions.
@@ -88,6 +89,8 @@ class AgentRunResult:
     cost_usd: Decimal
     latency_ms: int
     used_fallback: bool
+    guardrail_reason: str | None = None
+    unsupported_numbers: tuple[str, ...] = ()
     trace_id: int | None = None
 
 
@@ -153,6 +156,8 @@ def run_faq_agent(
     output_tokens = 0
     cost_usd = Decimal("0")
     has_evidence = False
+    fallback_reason = "no_grounding_evidence"
+    unsupported_numbers: tuple[str, ...] = ()
     run_started = perf_counter()
 
     for _ in range(MAX_MODEL_ROUNDS):
@@ -163,6 +168,7 @@ def run_faq_agent(
 
         if turn.tool_calls:
             if len(tool_events) + len(turn.tool_calls) > MAX_TOOL_CALLS:
+                fallback_reason = "tool_limit_exceeded"
                 break
             messages.append(
                 AgentMessage(
@@ -212,8 +218,21 @@ def run_faq_agent(
             continue
 
         if turn.text and turn.text.strip() and has_evidence:
+            proposed_reply = turn.text.strip()
+            numeric_check = check_numeric_grounding(
+                proposed_reply,
+                [
+                    event.output
+                    for event in tool_events
+                    if event.output is not None
+                ],
+            )
+            if not numeric_check.is_supported:
+                fallback_reason = "unsupported_numeric_facts"
+                unsupported_numbers = numeric_check.unsupported_numbers
+                break
             result = _result(
-                reply=turn.text.strip(),
+                reply=proposed_reply,
                 language=language,
                 model=model,
                 tool_events=tool_events,
@@ -222,6 +241,8 @@ def run_faq_agent(
                 cost_usd=cost_usd,
                 run_started=run_started,
                 used_fallback=False,
+                guardrail_reason=None,
+                unsupported_numbers=(),
             )
             return _persist_result(
                 result=result,
@@ -231,6 +252,8 @@ def run_faq_agent(
                 persist_trace=persist_trace,
             )
         break
+    else:
+        fallback_reason = "model_round_limit"
 
     result = _result(
         reply=fallback_reply(language),
@@ -242,6 +265,8 @@ def run_faq_agent(
         cost_usd=cost_usd,
         run_started=run_started,
         used_fallback=True,
+        guardrail_reason=fallback_reason,
+        unsupported_numbers=unsupported_numbers,
     )
     return _persist_result(
         result=result,
@@ -275,6 +300,8 @@ def _result(
     cost_usd: Decimal,
     run_started: float,
     used_fallback: bool,
+    guardrail_reason: str | None,
+    unsupported_numbers: tuple[str, ...],
 ) -> AgentRunResult:
     return AgentRunResult(
         reply=reply,
@@ -286,6 +313,8 @@ def _result(
         cost_usd=cost_usd,
         latency_ms=round((perf_counter() - run_started) * 1000),
         used_fallback=used_fallback,
+        guardrail_reason=guardrail_reason,
+        unsupported_numbers=unsupported_numbers,
     )
 
 

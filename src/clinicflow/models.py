@@ -386,6 +386,12 @@ class AgentRun(Base):
     prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
     model_name: Mapped[str] = mapped_column(String(160), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
+    guardrail_reason: Mapped[str | None] = mapped_column(String(64))
+    unsupported_numbers: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="[]",
+    )
     question: Mapped[str] = mapped_column(Text, nullable=False)
     reply: Mapped[str] = mapped_column(Text, nullable=False)
     tool_events: Mapped[list[dict[str, object]]] = mapped_column(

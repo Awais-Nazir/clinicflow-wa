@@ -169,6 +169,37 @@ def test_tool_error_is_returned_to_model_and_cannot_ground_answer(
     assert "error" in model.calls[1][-1].content
 
 
+def test_agent_rejects_invented_numeric_fact(database_engine: Engine) -> None:
+    tenant = seed_demo_clinic("phone-456")
+    model = ScriptedModel(
+        [
+            ModelTurn(
+                tool_calls=(
+                    ToolCallRequest(
+                        id="services-price",
+                        name="get_services",
+                        arguments={},
+                    ),
+                )
+            ),
+            ModelTurn(text="Hydra facial costs PKR 9999."),
+        ]
+    )
+
+    result = run_faq_agent(
+        question="Hydra facial kitne ki hai?",
+        tenant_id=tenant.id,
+        model=model,
+    )
+
+    assert result.used_fallback is True
+    assert result.guardrail_reason == "unsupported_numeric_facts"
+    assert result.unsupported_numbers == ("9999",)
+    assert result.reply == (
+        "Mujhe clinic ki available maloomat mein iska jawab nahi mila."
+    )
+
+
 def test_language_detection_is_deterministic() -> None:
     assert detect_reply_language("Clinic kab khulti hai?") == "roman_ur"
     assert detect_reply_language("کلینک کب کھلتا ہے؟") == "ur"
