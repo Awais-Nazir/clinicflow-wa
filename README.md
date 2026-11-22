@@ -7,12 +7,11 @@ multi-clinic isolation.
 
 ## Current milestone
 
-Phase 0: receive a WhatsApp webhook, persist it safely, process it in a worker,
-and send an echo response through the WhatsApp Cloud API.
+Phase 1: build a grounded FAQ assistant for one fictional clinic on top of the
+completed webhook, inbox, worker, and WhatsApp send pipeline from Phase 0.
 
-The current checkpoint contains a local FastAPI application with a tested
-health endpoint. See [the Phase 0 plan](docs/phase-0.md) for the small-step
-build sequence.
+See [the Phase 1 plan](docs/phase-1.md) for the small-step build sequence and
+[the completed Phase 0 plan](docs/phase-0.md) for the deployed foundation.
 
 ## Technology direction
 
@@ -63,6 +62,16 @@ uv run alembic upgrade head
 The database is bound to `127.0.0.1:5433` and persists in the
 `clinicflow-postgres-data` Docker volume. `docker compose down` stops the
 container without deleting that data.
+
+Seed the fictional Phase 1 clinic after applying migrations:
+
+```powershell
+$env:WHATSAPP_PHONE_NUMBER_ID = "your-meta-phone-number-id"
+uv run python -m clinicflow.seed_demo
+```
+
+The seed is idempotent: running it again updates the same demo clinic and
+service records rather than creating duplicates.
 
 ## Webhook verification
 
