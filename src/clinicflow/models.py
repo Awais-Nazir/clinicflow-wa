@@ -297,6 +297,11 @@ class InboxMessage(Base):
 
     __tablename__ = "inbox_messages"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id"],
+            ["conversations.id", "conversations.tenant_id"],
+            name="fk_inbox_messages_conversation_tenant",
+        ),
         UniqueConstraint(
             "message_id",
             name="uq_inbox_messages_message_id",
@@ -304,6 +309,16 @@ class InboxMessage(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        index=True,
+    )
+    conversation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        index=True,
+    )
     message_id: Mapped[str] = mapped_column(Text, nullable=False)
     phone_number_id: Mapped[str] = mapped_column(Text, nullable=False)
     sender_id: Mapped[str] = mapped_column(Text, nullable=False)

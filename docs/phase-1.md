@@ -20,11 +20,11 @@ incorrect medical, pricing, or schedule information.
      services, prices, and durations.
    - ✅ **Hours and doctors** — add weekly opening hours and doctor
      information.
-3. 🚧 **Conversation storage**
+3. ✅ **Conversation storage**
    - ✅ **Storage primitives** — persist idempotent, tenant-scoped
      conversations plus inbound and outbound messages.
-   - **Pipeline connection** — attach authenticated inbound messages to the
-     correct tenant and conversation.
+   - ✅ **Pipeline connection** — attach authenticated inbound messages to
+     the correct tenant and conversation; safely ignore unknown numbers.
 4. **Knowledge base** — store policy and FAQ chunks and add tenant-isolated
    hybrid retrieval.
 5. **Grounded tools and agent** — implement `get_services`, `get_clinic_info`,

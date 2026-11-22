@@ -6,6 +6,7 @@ from typing import Literal
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
 
 from clinicflow.database import session_scope
 from clinicflow.models import Conversation, ConversationMessage
@@ -37,6 +38,21 @@ def get_or_create_conversation(
 ) -> ConversationContext:
     """Return the stable conversation for one customer at one clinic."""
 
+    with session_scope() as session:
+        return get_or_create_conversation_in_session(
+            session,
+            tenant_id,
+            customer_wa_id,
+        )
+
+
+def get_or_create_conversation_in_session(
+    session: Session,
+    tenant_id: int,
+    customer_wa_id: str,
+) -> ConversationContext:
+    """Get or create a conversation inside the caller's transaction."""
+
     normalized_customer_id = customer_wa_id.strip()
     if not normalized_customer_id:
         raise ValueError("customer_wa_id cannot be empty")
@@ -44,10 +60,7 @@ def get_or_create_conversation(
     statement = (
         insert(Conversation)
         .values(tenant_id=tenant_id, customer_wa_id=normalized_customer_id)
-        .on_conflict_do_update(
-            constraint="uq_conversations_tenant_customer",
-            set_={"updated_at": func.now()},
-        )
+        .on_conflict_do_nothing(constraint="uq_conversations_tenant_customer")
         .returning(
             Conversation.id,
             Conversation.tenant_id,
@@ -56,8 +69,19 @@ def get_or_create_conversation(
         )
     )
 
-    with session_scope() as session:
-        row = session.execute(statement).one()
+    row = session.execute(statement).one_or_none()
+    if row is None:
+        row = session.execute(
+            select(
+                Conversation.id,
+                Conversation.tenant_id,
+                Conversation.customer_wa_id,
+                Conversation.status,
+            ).where(
+                Conversation.tenant_id == tenant_id,
+                Conversation.customer_wa_id == normalized_customer_id,
+            )
+        ).one()
 
     return ConversationContext(
         id=row.id,
@@ -79,6 +103,32 @@ def record_message(
 ) -> bool:
     """Persist a message once and update its conversation's activity time."""
 
+    with session_scope() as session:
+        return record_message_in_session(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            direction=direction,
+            message_type=message_type,
+            body=body,
+            external_message_id=external_message_id,
+            occurred_at=occurred_at,
+        )
+
+
+def record_message_in_session(
+    session: Session,
+    *,
+    tenant_id: int,
+    conversation_id: int,
+    direction: MessageDirection,
+    message_type: str,
+    body: str | None,
+    external_message_id: str | None = None,
+    occurred_at: datetime | None = None,
+) -> bool:
+    """Persist a message inside the caller's transaction."""
+
     message_time = occurred_at or datetime.now(timezone.utc)
     statement = (
         insert(ConversationMessage)
@@ -97,19 +147,18 @@ def record_message(
         .returning(ConversationMessage.id)
     )
 
-    with session_scope() as session:
-        inserted_id = session.scalar(statement)
-        if inserted_id is None:
-            return False
+    inserted_id = session.scalar(statement)
+    if inserted_id is None:
+        return False
 
-        session.execute(
-            update(Conversation)
-            .where(
-                Conversation.id == conversation_id,
-                Conversation.tenant_id == tenant_id,
-            )
-            .values(last_message_at=message_time, updated_at=func.now())
+    session.execute(
+        update(Conversation)
+        .where(
+            Conversation.id == conversation_id,
+            Conversation.tenant_id == tenant_id,
         )
+        .values(last_message_at=message_time, updated_at=func.now())
+    )
 
     return True
 
