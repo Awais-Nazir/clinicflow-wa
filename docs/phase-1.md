@@ -50,8 +50,15 @@ provider-independent so this change does not affect tenant or retrieval logic.
 6. ✅ **Numeric grounding check** — normalize ASCII and Urdu/Arabic digits,
    then reject replies containing any price or number absent from tool results;
    persist the rejection reason and unsupported values in the run trace.
-7. **Evaluation runner** — add about 25 answerable, unanswerable, and multilingual
-   cases before expanding the agent.
+7. ✅ **Evaluation runner** — keep 25 versioned answerable, unanswerable, and
+   multilingual cases, run them through the real tools and guardrails, print
+   scores by category, and fail the command when a regression is detected. The
+   current deterministic fixture is a zero-cost pipeline baseline, not a claim
+   about real-model answer quality.
+8. **Free development model and WhatsApp integration** — add a real no-cost
+   development model adapter, run the same eval cases against it, then replace
+   the Phase 0 echo preparation with grounded FAQ replies and test the complete
+   WhatsApp path.
 
 Each checkpoint stays small enough to inspect, test, and understand before we
 move to the next one.

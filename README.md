@@ -49,6 +49,17 @@ Run the automated tests:
 uv run pytest
 ```
 
+Run the Phase 1 FAQ regression suite:
+
+```powershell
+uv run python -m clinicflow.evals
+```
+
+It currently uses a deterministic, zero-cost fixture model while exercising
+the real tenant-scoped tools and numeric guardrail. Its 25 versioned cases form
+the pipeline baseline; the next checkpoint will run the same cases against a
+real free development model.
+
 ## Local PostgreSQL
 
 Start the Compose-managed PostgreSQL 18 container:
