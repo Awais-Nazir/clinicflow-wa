@@ -42,8 +42,9 @@ provider-independent so this change does not affect tenant or retrieval logic.
    - ✅ **Tenant-bound tools** — expose `get_services`, `get_clinic_info`,
      and `search_kb`; application code injects the tenant ID and model-supplied
      tenant overrides are rejected.
-   - **Agent orchestration** — let the model select tools and produce a grounded
-     answer in the customer's language.
+   - ✅ **Agent orchestration** — use a provider-independent, bounded tool loop
+     with a free scripted model in tests and a same-language deterministic
+     fallback when no grounding evidence is available.
    - **Run traces** — persist tool calls, tokens, latency, model, and cost for
      each agent run.
 6. **Numeric grounding check** — reject replies containing prices or numbers
