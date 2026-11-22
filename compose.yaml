@@ -2,7 +2,7 @@ name: clinicflow
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: pgvector/pgvector:0.8.7-pg18-trixie
     container_name: clinicflow-postgres
     environment:
       POSTGRES_DB: clinicflow

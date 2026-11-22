@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from clinicflow.database import session_scope
+from clinicflow.embeddings import HashingEmbedder
 from clinicflow.models import (
     ClinicOpeningHours,
     ClinicProfile,
@@ -123,6 +124,7 @@ DEMO_KNOWLEDGE_CHUNKS = (
         "chunk_index": 0,
     },
 )
+DEMO_EMBEDDER = HashingEmbedder()
 
 
 @dataclass(frozen=True)
@@ -262,15 +264,23 @@ def seed_demo_clinic(
                 )
             )
         for chunk in DEMO_KNOWLEDGE_CHUNKS:
+            embedding = DEMO_EMBEDDER.embed([chunk["content"]])[0]
             session.execute(
                 insert(KnowledgeChunk)
-                .values(tenant_id=tenant_id, **chunk)
+                .values(
+                    tenant_id=tenant_id,
+                    embedding=embedding,
+                    embedding_model=DEMO_EMBEDDER.model_name,
+                    **chunk,
+                )
                 .on_conflict_do_update(
                     constraint="uq_knowledge_chunks_tenant_source_chunk",
                     set_={
                         "title": chunk["title"],
                         "content": chunk["content"],
                         "language": chunk["language"],
+                        "embedding": embedding,
+                        "embedding_model": DEMO_EMBEDDER.model_name,
                     },
                 )
             )

@@ -25,11 +25,11 @@ incorrect medical, pricing, or schedule information.
      conversations plus inbound and outbound messages.
    - ✅ **Pipeline connection** — attach authenticated inbound messages to
      the correct tenant and conversation; safely ignore unknown numbers.
-4. 🚧 **Knowledge base**
+4. ✅ **Knowledge base**
    - ✅ **Chunks and lexical search** — store seeded FAQ/policy chunks
      and retrieve them with tenant-filtered PostgreSQL full-text search.
-   - **Hybrid retrieval** — add embeddings and combine vector similarity with
-     lexical ranking.
+   - ✅ **Hybrid retrieval** — add swappable embeddings and combine exact
+     cosine similarity with lexical ranking using Reciprocal Rank Fusion.
 5. **Grounded tools and agent** — implement `get_services`, `get_clinic_info`,
    and `search_kb`; application code injects the tenant ID.
 6. **Numeric grounding check** — reject replies containing prices or numbers

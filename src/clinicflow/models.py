@@ -3,6 +3,7 @@
 from datetime import datetime, time
 from decimal import Decimal
 
+from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -249,6 +250,8 @@ class KnowledgeChunk(Base):
         ),
         nullable=False,
     )
+    embedding: Mapped[list[float] | None] = mapped_column(VECTOR(384))
+    embedding_model: Mapped[str | None] = mapped_column(String(160))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

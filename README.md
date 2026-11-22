@@ -60,8 +60,9 @@ uv run alembic upgrade head
 ```
 
 The database is bound to `127.0.0.1:5433` and persists in the
-`clinicflow-postgres-data` Docker volume. `docker compose down` stops the
-container without deleting that data.
+`clinicflow-postgres-data` Docker volume. The Compose service uses a pinned
+PostgreSQL 18 image with pgvector included; Alembic enables the `vector`
+extension. `docker compose down` stops the container without deleting its data.
 
 Seed the fictional Phase 1 clinic after applying migrations:
 
