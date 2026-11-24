@@ -20,6 +20,8 @@ from clinicflow.handoff import (
     lock_conversation, start_handoff,
 )
 from clinicflow.models import Conversation, ConversationMessage, InboxMessage, OutboxMessage
+from clinicflow.observability import configure_error_reporting
+from clinicflow.quotas import Quota
 from clinicflow.voice import VoiceError, VoiceProcessor, WhisperTranscriber
 from clinicflow.whatsapp import (
     WhatsAppAPIError,
@@ -122,8 +124,13 @@ def prepare_faq_batch(
                 if current is None:
                     continue
                 conversation = _conversation_for_inbox(session, current)
-                if conversation and not bot_can_reply(session, conversation, datetime.now(timezone.utc)):
+                now = datetime.now(timezone.utc)
+                if conversation is None or not bot_can_reply(session, conversation, now):
                     _ignore_inbox(current)
+                    continue
+                quota = Quota.for_message(session, conversation, now)
+                if not quota.record_message(session, current):
+                    prepared += _quota_handoff(session, current, conversation, quota, "message_limit", "", now)
                     continue
         question = _transcribe_message(message, voice) if from_voice else message.body.strip()
         with session_scope() as session:
@@ -151,6 +158,10 @@ def prepare_faq_batch(
                 _prepare_reply(session, current, handoff_reply(question, reason), allow_during_handoff=True)
                 prepared += 1
                 continue
+            quota = Quota.for_message(session, conversation, now)
+            if not quota.record_message(session, current):
+                prepared += _quota_handoff(session, current, conversation, quota, "message_limit", question, now)
+                continue
             booking = handle_booking_message(
                 session,
                 tenant_id=message.tenant_id,
@@ -165,23 +176,21 @@ def prepare_faq_batch(
                 _prepare_reply(session, current, booking.body, buttons=list(booking.buttons))
                 prepared += 1
                 continue
-        result = (
-            run_faq_agent(
-                question=question,
-                tenant_id=message.tenant_id,
-                model=model,
-                persist_trace=False,
-            )
-            if question
-            else None
+            if not question:
+                _ignore_inbox(current)
+                continue
+            if not quota.reserve_tokens(session):
+                prepared += _quota_handoff(session, current, conversation, quota, "token_budget", question, now)
+                continue
+        result = run_faq_agent(
+            question=question, tenant_id=message.tenant_id, model=model, persist_trace=False,
         )
         with session_scope() as session:
             current = _lock_active_claim(session, message)
             if current is None:
                 continue
-            if result is None:
-                _ignore_inbox(current)
-                continue
+            conversation = _conversation_for_inbox(session, current)
+            quota.settle_tokens(session, result.input_tokens + result.output_tokens)
             save_agent_run_in_session(
                 session,
                 tenant_id=message.tenant_id,
@@ -191,7 +200,6 @@ def prepare_faq_batch(
                 result=result,
             )
             now = datetime.now(timezone.utc)
-            conversation = _conversation_for_inbox(session, current)
             if conversation is None or not bot_can_reply(session, conversation, now):
                 _ignore_inbox(current)
                 continue
@@ -206,6 +214,18 @@ def prepare_faq_batch(
                 _prepare_reply(session, current, result.reply)
             prepared += 1
     return prepared
+
+
+def _quota_handoff(
+    session: Session, message: InboxMessage, conversation: Conversation, quota: Quota,
+    reason: str, question: str, now: datetime,
+) -> int:
+    start_handoff(session, conversation, reason, now)
+    if not quota.claim_notice(session, reason):
+        _ignore_inbox(message)
+        return 0
+    _prepare_reply(session, message, handoff_reply(question, reason), allow_during_handoff=True)
+    return 1
 
 
 def _voice_message_identity(message: InboxMessage):
@@ -617,4 +637,5 @@ def _poll_messages(model: AgentModel | None) -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    configure_error_reporting()
     run_forever()

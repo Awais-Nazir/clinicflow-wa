@@ -23,6 +23,7 @@ packages = ["src/clinicflow"]
 
 [project.optional-dependencies]
 voice = ["faster-whisper>=1.2,<2"]
+observability = ["sentry-sdk>=2,<3"]
 
 [dependency-groups]
 dev = [

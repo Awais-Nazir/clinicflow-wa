@@ -59,6 +59,13 @@ def handoff_reply(question: str, reason: str) -> str:
             "ur": "اگر یہ ایمرجنسی ہو سکتی ہے تو ابھی مقامی ایمرجنسی سروس سے رابطہ کریں۔ ",
         }
         return urgent[language] + notices[language]
+    if reason in {"message_limit", "token_budget"}:
+        limits = {
+            "en": "The automated assistant has reached its limit for today. ",
+            "roman_ur": "Assistant ki aaj ki limit poori ho gayi hai. ",
+            "ur": "خودکار معاون کی آج کی حد پوری ہو گئی ہے۔ ",
+        }
+        return limits[language] + notices[language]
     return notices[language]
 
 

@@ -1,6 +1,6 @@
 """SQLAlchemy persistence models."""
 
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from pgvector.sqlalchemy import VECTOR
@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -336,6 +337,18 @@ class HandoffCase(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class UsageCounter(Base):
+    """A locked daily quota bucket for one tenant and opaque subject."""
+
+    __tablename__ = "usage_counters"
+    __table_args__ = (CheckConstraint("units >= 0", name="ck_usage_counters_units"),)
+
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    subject: Mapped[str] = mapped_column(String(80), primary_key=True)
+    units: Mapped[int] = mapped_column(BigInteger, server_default="0")
+
+
 class Provider(Base):
     """A bookable clinician or resource owned by one clinic."""
 
@@ -595,6 +608,7 @@ class InboxMessage(Base):
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     faq_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quota_day: Mapped[date | None] = mapped_column(Date)
     last_error: Mapped[str | None] = mapped_column(Text)
 
 

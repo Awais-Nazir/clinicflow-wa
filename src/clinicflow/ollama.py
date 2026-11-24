@@ -18,6 +18,8 @@ from clinicflow.agent import (
 DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_OLLAMA_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
 DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS = 256
+OLLAMA_CONTEXT_TOKENS = 4096
+OLLAMA_MAX_GENERATION_TOKENS = 1024
 
 
 class OllamaError(AgentModelError):
@@ -41,8 +43,8 @@ class OllamaModel:
             raise ValueError("Ollama model cannot be empty")
         if not normalized_base_url:
             raise ValueError("Ollama base URL cannot be empty")
-        if max_output_tokens < 1:
-            raise ValueError("Ollama max output tokens must be positive")
+        if not 1 <= max_output_tokens <= OLLAMA_MAX_GENERATION_TOKENS:
+            raise ValueError(f"Ollama max output tokens must be between 1 and {OLLAMA_MAX_GENERATION_TOKENS}")
 
         self.model_name = normalized_model
         self._max_output_tokens = max_output_tokens
@@ -84,6 +86,7 @@ class OllamaModel:
             "think": False,
             "options": {
                 "temperature": 0,
+                "num_ctx": OLLAMA_CONTEXT_TOKENS,
                 "num_predict": self._max_output_tokens,
             },
         }

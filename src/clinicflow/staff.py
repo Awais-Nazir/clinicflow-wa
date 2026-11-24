@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 
 from clinicflow.database import session_scope
 from clinicflow.handoff import lock_conversation, resume_bot
-from clinicflow.models import ConversationMessage, HandoffCase, InboxMessage, OutboxMessage, Tenant
+from clinicflow.models import (
+    AgentRun, Conversation, ConversationMessage, HandoffCase, InboxMessage, OutboxMessage, Tenant,
+)
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
@@ -109,6 +111,30 @@ def reply_to_case(tenant_id: StaffTenant, case_id: int, reply: StaffReply):
                 message_type="text", allow_during_handoff=True,
             ))
     return {"queued": inbound_id is not None}
+
+
+@router.get("/conversations/{conversation_id}/traces")
+def conversation_traces(tenant_id: StaffTenant, conversation_id: int, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    with session_scope() as session:
+        exists = session.scalar(select(Conversation.id).where(
+            Conversation.tenant_id == tenant_id, Conversation.id == conversation_id,
+        ))
+        if exists is None:
+            raise HTTPException(404)
+        traces = session.scalars(select(AgentRun).where(
+            AgentRun.tenant_id == tenant_id, AgentRun.conversation_id == conversation_id,
+        ).order_by(AgentRun.id.desc()).limit(50))
+        return [{
+            "id": run.id, "status": run.status, "reason": run.guardrail_reason,
+            "model": run.model_name, "prompt_version": run.prompt_version,
+            "tools": [
+                {"name": event["name"], "ok": event["error"] is None}
+                for event in run.tool_events
+            ],
+            "input_tokens": run.input_tokens, "output_tokens": run.output_tokens,
+            "latency_ms": run.latency_ms, "cost_usd": str(run.cost_usd),
+        } for run in traces]
 
 
 @router.post("/handoffs/{case_id}/resume", status_code=204)

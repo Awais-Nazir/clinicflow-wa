@@ -2,8 +2,11 @@
 
 from fastapi import FastAPI
 
+from clinicflow.observability import configure_error_reporting
 from clinicflow.staff import router as staff_router
 from clinicflow.webhooks import router as webhook_router
+
+configure_error_reporting()
 
 app = FastAPI(
     title="ClinicFlow WA",

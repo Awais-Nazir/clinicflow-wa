@@ -436,6 +436,36 @@ def test_coexistence_staff_echo_suppresses_prepared_bot_reply(
         )) == 1
 
 
+@pytest.mark.parametrize(("limit_name", "value", "expected_reason"), [
+    ("CUSTOMER_DAILY_MESSAGE_LIMIT", "1", "message_limit"),
+    ("TENANT_DAILY_TOKEN_LIMIT", "1", "token_budget"),
+])
+def test_worker_limits_send_one_notice_and_handoff(
+    monkeypatch: pytest.MonkeyPatch, database_engine: Engine, limit_name, value, expected_reason,
+) -> None:
+    monkeypatch.setenv("META_APP_SECRET", APP_SECRET)
+    monkeypatch.setenv("HANDOFF_PAUSE_SECONDS", "0")
+    monkeypatch.setenv(limit_name, value)
+    seed_demo_clinic("phone-456")
+
+    with TestClient(app) as client:
+        for index in range(4):
+            payload = inbound_text_payload()
+            message = payload["entry"][0]["changes"][0]["value"]["messages"][0]
+            message["id"] = f"wamid.spam-{index}"
+            raw = json.dumps(payload).encode()
+            assert client.post(WEBHOOK_URL, content=raw, headers=signed_headers(raw)).status_code == 200
+            prepare_faq_batch(FaqTestModel())
+    with database_engine.connect() as connection:
+        assert connection.scalar(text("SELECT reason FROM handoff_cases")) == expected_reason
+        assert connection.scalar(text(
+            "SELECT count(*) FROM outbox_messages WHERE allow_during_handoff"
+        )) == 1
+        assert connection.scalar(text("SELECT status FROM conversations")) == "human"
+        traces = connection.scalar(text("SELECT count(*) FROM agent_runs"))
+        assert traces == (1 if expected_reason == "message_limit" else 0)
+
+
 def test_unknown_phone_number_is_acknowledged_without_creating_work(
     monkeypatch: pytest.MonkeyPatch,
     database_engine: Engine,

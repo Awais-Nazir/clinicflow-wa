@@ -55,7 +55,7 @@ def test_ollama_adapter_sends_tools_and_parses_tool_call() -> None:
     assert captured["model"] == "qwen3:4b"
     assert captured["stream"] is False
     assert captured["think"] is False
-    assert captured["options"] == {"temperature": 0, "num_predict": 256}
+    assert captured["options"] == {"temperature": 0, "num_ctx": 4096, "num_predict": 256}
     assert captured["tools"] == [
         {
             "type": "function",

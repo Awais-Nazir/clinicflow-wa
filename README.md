@@ -172,6 +172,30 @@ automatically pauses the bot. The dev inbox is the local fallback for test
 numbers. Live Coexistence requires the business app onboarding flow and a
 connected business number.
 
+### Regression gate and quotas
+
+Create a disposable `clinicflow_test` database in the local PostgreSQL
+container. Point `CLINICFLOW_TEST_DATABASE_URL` to that database and run:
+
+```powershell
+uv run python -m clinicflow.regression
+```
+
+The command applies migrations, runs the workflow tests and scores 60 FAQ
+cases. Pass `--provider ollama` for a slower model check. The FAQ CLI's
+`--judge-style` option reports language and tone separately from factual
+checks.
+
+The worker counts messages per customer and tokens per tenant on the clinic's
+local day. It reserves a request's worst-case token use during inference and
+settles against observed usage afterward. On either limit it sends one notice
+and sends the conversation to the staff inbox. Authorized staff can inspect
+tool decisions and timing at `GET /staff/conversations/{id}/traces`.
+
+Install the optional `observability` extra and set `SENTRY_DSN` to enable
+exception reporting. The outbound error payload keeps exception types and code
+locations and removes conversation data, request bodies, and error text.
+
 The worker claims pending inbox rows with PostgreSQL `FOR UPDATE SKIP LOCKED`,
 creates one durable `outbox_messages` row per inbound message, and marks the
 inbox row processed in the same transaction. Multiple workers can therefore

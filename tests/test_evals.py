@@ -7,6 +7,7 @@ import os
 import pytest
 
 from clinicflow.evals import (
+    EXTENDED_CASES_PATH,
     EvalCase,
     FixtureEvalModel,
     format_summary,
@@ -35,6 +36,12 @@ def test_dataset_has_25_unique_cases_in_expected_categories() -> None:
         "unanswerable": 4,
         "multilingual": 3,
     }
+
+
+def test_extended_dataset_adds_35_distinct_cases():
+    cases = load_eval_cases() + load_eval_cases(EXTENDED_CASES_PATH)
+    assert len(cases) == len({case.id for case in cases}) == 60
+    assert sum(case.category == "injection" for case in cases) == 5
 
 
 @requires_database
