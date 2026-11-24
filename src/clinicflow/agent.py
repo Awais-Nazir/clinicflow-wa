@@ -9,8 +9,14 @@ from typing import Literal, Protocol
 
 from clinicflow.agent_tools import ClinicToolbox, ToolExecutionError
 from clinicflow.faq_evidence import (
+    INSTRUCTION_OVERRIDE,
     is_named_price_question,
+    is_service_question,
+    policy_search,
+    render_cash_acceptance,
+    render_clinic_hours,
     render_service_price,
+    requested_hours_day,
     scope_faq_evidence,
 )
 from clinicflow.grounding import check_numeric_grounding
@@ -34,9 +40,14 @@ or a list that omits the requested person or treatment is insufficient. If the
 result does not answer the question, output only {NO_CLINIC_ANSWER}. Never
 diagnose or recommend treatment.
 """
-PROMPT_VERSION = "faq-v4"
+PROMPT_VERSION = "faq-v5"
 MAX_MODEL_ROUNDS = 4
 MAX_TOOL_CALLS = 8
+REPLY_TONES = {
+    "warm": "Use a warm, welcoming tone.",
+    "formal": "Use formal and respectful wording.",
+    "concise": "Keep the reply to the shortest complete answer.",
+}
 
 ReplyLanguage = Literal["en", "roman_ur", "ur"]
 MessageRole = Literal["system", "user", "assistant", "tool"]
@@ -141,6 +152,10 @@ def detect_reply_language(text: str) -> ReplyLanguage:
     return "en"
 
 
+def uses_urdu_script(text: str) -> bool:
+    return any("\u0600" <= character <= "\u06ff" and character.isalpha() for character in text)
+
+
 def fallback_reply(language: ReplyLanguage) -> str:
     """Return the grounded don't-know response in the detected language."""
 
@@ -167,6 +182,7 @@ def run_faq_agent(
     toolbox: ClinicToolbox | None = None,
     conversation_id: int | None = None,
     persist_trace: bool = True,
+    tone: str = "standard",
 ) -> AgentRunResult:
     """Run a bounded tool-use loop and return a trace-ready result."""
 
@@ -176,8 +192,11 @@ def run_faq_agent(
 
     language = detect_reply_language(normalized_question)
     active_toolbox = toolbox or ClinicToolbox(tenant_id)
+    prompt = SYSTEM_PROMPT
+    if tone in REPLY_TONES:
+        prompt += "\n" + REPLY_TONES[tone]
     messages = [
-        AgentMessage(role="system", content=SYSTEM_PROMPT),
+        AgentMessage(role="system", content=prompt),
         AgentMessage(role="user", content=normalized_question),
     ]
     tool_events: list[ToolEvent] = []
@@ -189,13 +208,27 @@ def run_faq_agent(
     unsupported_numbers: tuple[str, ...] = ()
     grounded_reply: str | None = None
     run_started = perf_counter()
+    policy_query = policy_search(normalized_question)
+    hours_day = requested_hours_day(normalized_question) if policy_query is None else None
 
-    for _ in range(MAX_MODEL_ROUNDS):
-        try:
-            turn = model.complete(tuple(messages), active_toolbox.definitions())
-        except AgentModelError:
-            fallback_reason = "model_unavailable"
+    for round_index in range(MAX_MODEL_ROUNDS):
+        if INSTRUCTION_OVERRIDE.search(normalized_question):
+            fallback_reason = "instruction_override"
             break
+        if round_index == 0 and policy_query is not None:
+            turn = ModelTurn(tool_calls=(
+                ToolCallRequest("policy-lookup", "search_kb", {"query": policy_query}),
+            ))
+        elif round_index == 0 and hours_day is not None:
+            turn = ModelTurn(tool_calls=(ToolCallRequest("hours-lookup", "get_clinic_info", {}),))
+        elif round_index == 0 and is_service_question(normalized_question):
+            turn = ModelTurn(tool_calls=(ToolCallRequest("service-lookup", "get_services", {}),))
+        else:
+            try:
+                turn = model.complete(tuple(messages), active_toolbox.definitions())
+            except AgentModelError:
+                fallback_reason = "model_unavailable"
+                break
         input_tokens += turn.usage.input_tokens
         output_tokens += turn.usage.output_tokens
         cost_usd += turn.usage.cost_usd
@@ -232,6 +265,11 @@ def run_faq_agent(
                         ):
                             grounded_reply = render_service_price(output)
                             missing_record = missing_record or grounded_reply is None
+                        if call.name == "get_clinic_info" and hours_day is not None:
+                            grounded_reply = render_clinic_hours(output, hours_day, language)
+                            missing_record = missing_record or grounded_reply is None
+                        if call.name == "search_kb" and policy_query == "cash payment":
+                            grounded_reply = render_cash_acceptance(output, language)
                     has_evidence = has_evidence or _contains_evidence(output)
 
                 latency_ms = round((perf_counter() - tool_started) * 1000)
@@ -275,6 +313,12 @@ def run_faq_agent(
             break
 
         if proposed_reply and has_evidence:
+            if language == "ur" and not uses_urdu_script(proposed_reply):
+                messages.extend((
+                    AgentMessage(role="assistant", content=proposed_reply),
+                    AgentMessage(role="user", content="اسی معلومات کی بنیاد پر اردو رسم الخط میں جواب دیں۔"),
+                ))
+                continue
             numeric_check = check_numeric_grounding(
                 proposed_reply,
                 [

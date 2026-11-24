@@ -7,8 +7,8 @@ multi-clinic isolation.
 
 ## Current milestone
 
-The fictional Noor Clinic supports local FAQ, booking, voice notes, and staff
-handoff. The local evaluations build on Phase 0's WhatsApp delivery pipeline.
+ClinicFlow supports local FAQ, booking, voice notes, staff handoff, and multiple
+fictional clinics. The local evaluations build on Phase 0's delivery pipeline.
 
 See [the Phase 1 plan](docs/phase-1.md) for the small-step build sequence and
 [the completed Phase 0 plan](docs/phase-0.md) for the deployed foundation.
@@ -195,6 +195,45 @@ tool decisions and timing at `GET /staff/conversations/{id}/traces`.
 Install the optional `observability` extra and set `SENTRY_DSN` to enable
 exception reporting. The outbound error payload keeps exception types and code
 locations and removes conversation data, request bodies, and error text.
+
+### Onboard a second clinic
+
+Use `examples/second-clinic.json` as the manifest for fictional Mehr Clinic.
+The importer validates the timezone, public facts, provider service mappings,
+and WhatsApp number ownership. Its settings include clinic tone and the
+language used when a voice note cannot be read.
+
+```powershell
+uv run python -m clinicflow.onboarding examples/second-clinic.json --offline
+```
+
+To run the bundled two-clinic smoke test, migrate a dedicated local smoke
+database, set `CLINICFLOW_TEST_DATABASE_URL` to it, and run:
+
+```powershell
+docker compose -f compose.whaloc.yaml up -d
+uv run python -m clinicflow.whaloc_smoke
+```
+
+It submits signed Whaloc webhook fixtures to the real app, sends the resulting
+replies back through Whaloc's Graph endpoint, and verifies distinct conversations
+for the same fictional customer. The emulator binds only to loopback and
+uses synthetic credentials.
+
+For a real number, use the registered Meta phone-number ID in the manifest.
+Set `CLINICFLOW_NEW_TENANT_TOKEN` for the import and keep
+`CLINICFLOW_TOKEN_KEY` in your deployment secrets. Optionally set
+`CLINICFLOW_NEW_STAFF_TOKEN` to issue a tenant-scoped staff Bearer token.
+Run onboarding without `--offline` to encrypt and store the WhatsApp token.
+Existing single-number deployments can continue to use the global
+`WHATSAPP_ACCESS_TOKEN` when `WHATSAPP_PHONE_NUMBER_ID` identifies that number.
+The token fallback applies only to that configured number.
+
+The local acceptance checks cover the original and expanded FAQ suites,
+booking confirmation and slot concurrency, voice transcription and readback,
+staff handoff, usage caps, and two-clinic isolation. A live rollout needs a
+worker that can reach the chosen model runtime, a registered Meta number for
+each live clinic, and Urdu and Roman Urdu recordings for the voice benchmark.
 
 The worker claims pending inbox rows with PostgreSQL `FOR UPDATE SKIP LOCKED`,
 creates one durable `outbox_messages` row per inbound message, and marks the

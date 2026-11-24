@@ -1,0 +1,18 @@
+name: clinicflow-whaloc
+
+services:
+  whaloc:
+    image: ghcr.io/dgadelha/whaloc@sha256:d2c0a909093e3cf93c9ed69681f4a1a273de648b9b5cf3789c1014c4dbf2593f
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      WHALOC_PUBLIC_URL: "http://127.0.0.1:8081"
+      WHALOC_APP_SECRET: "${WHALOC_APP_SECRET:-clinicflow-local-emulator-secret}"
+      WHALOC_WEBHOOK_VERIFY_TOKEN: "${WHALOC_WEBHOOK_VERIFY_TOKEN:-clinicflow-local-verify}"
+      WHALOC_WEBHOOK_URL: "${WHALOC_WEBHOOK_URL:-}"
+      WHALOC_SEED: >-
+        [{"id":"700000000000000","name":"ClinicFlow Demo",
+        "phoneNumbers":[
+        {"id":"700000000000001","displayPhoneNumber":"+1 202-555-0101","verifiedName":"Noor Clinic (Demo)"},
+        {"id":"700000000000002","displayPhoneNumber":"+1 202-555-0102","verifiedName":"Mehr Clinic (Demo)"}],
+        "contacts":[{"waId":"12025550125","name":"Demo Customer"}]}]

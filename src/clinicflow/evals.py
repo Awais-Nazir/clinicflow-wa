@@ -19,6 +19,7 @@ from clinicflow.agent import (
     ReplyLanguage,
     ToolCallRequest,
     run_faq_agent,
+    uses_urdu_script,
 )
 from clinicflow.grounding import extract_text_numbers, normalize_fact_token
 from clinicflow.tenants import seed_demo_clinic
@@ -92,7 +93,10 @@ class FixtureEvalModel:
         tools: list[dict[str, object]],
     ) -> ModelTurn:
         self.turn += 1
-        if self.turn == 1 and self.case.expected_tool is not None:
+        if self.turn == 1 and self.case.expected_tool is not None and not any(
+            message.role == "tool" and message.name == self.case.expected_tool
+            for message in messages
+        ):
             return ModelTurn(
                 tool_calls=(
                     ToolCallRequest(
@@ -311,11 +315,7 @@ def _score_case(case: EvalCase, result: AgentRunResult) -> EvalResult:
         failures.append(
             f"language expected {case.expected_language}, got {result.language}"
         )
-    uses_urdu_script = any(
-        "\u0600" <= character <= "\u06ff" and character.isalpha()
-        for character in result.reply
-    )
-    if uses_urdu_script != (case.expected_language == "ur"):
+    if uses_urdu_script(result.reply) != (case.expected_language == "ur"):
         failures.append(f"wrong reply script for {case.expected_language}")
     if result.used_fallback != case.expect_fallback:
         failures.append(

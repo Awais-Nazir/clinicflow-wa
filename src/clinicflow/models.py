@@ -39,12 +39,18 @@ class Tenant(Base):
     __tablename__ = "tenants"
     __table_args__ = (
         UniqueConstraint("slug", name="uq_tenants_slug"),
+        UniqueConstraint("staff_token_hash", name="uq_tenants_staff_token_hash"),
+        CheckConstraint("reply_tone IN ('standard', 'warm', 'formal', 'concise')", name="ck_tenants_reply_tone"),
+        CheckConstraint("default_language IN ('en', 'ur', 'roman_ur')", name="ck_tenants_default_language"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     slug: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    reply_tone: Mapped[str] = mapped_column(String(20), server_default="standard")
+    default_language: Mapped[str] = mapped_column(String(8), server_default="roman_ur")
+    staff_token_hash: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -72,6 +78,7 @@ class WhatsAppPhoneNumber(Base):
     )
     phone_number_id: Mapped[str] = mapped_column(Text, nullable=False)
     display_phone_number: Mapped[str | None] = mapped_column(Text)
+    access_token_ciphertext: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -12,6 +12,8 @@ venv/
 .env
 .env.*
 !.env.example
+local-notes.json
+voice-notes/
 
 # Coverage and build output
 .coverage

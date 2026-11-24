@@ -19,7 +19,7 @@ from clinicflow.handoff import (
     MODEL_HANDOFF_REASONS, bot_can_reply, handoff_reason, handoff_reply,
     lock_conversation, start_handoff,
 )
-from clinicflow.models import Conversation, ConversationMessage, InboxMessage, OutboxMessage
+from clinicflow.models import Conversation, ConversationMessage, InboxMessage, OutboxMessage, Tenant
 from clinicflow.observability import configure_error_reporting
 from clinicflow.quotas import Quota
 from clinicflow.voice import VoiceError, VoiceProcessor, WhisperTranscriber
@@ -37,7 +37,11 @@ DEFAULT_MAX_SEND_ATTEMPTS = 3
 DEFAULT_RETRY_BASE_SECONDS = 5.0
 DEFAULT_STALE_SEND_SECONDS = 300.0
 FAQ_LEASE = timedelta(minutes=15)
-VOICE_FALLBACK = "Voice note samajh nahi aaya. Please apna message type kar dein."
+VOICE_FALLBACKS = {
+    "en": "I couldn't catch that voice note. Please type your message.",
+    "ur": "آواز واضح نہیں تھی۔ براہِ کرم اپنا پیغام لکھ کر بھیجیں۔",
+    "roman_ur": "Voice note samajh nahi aaya. Please apna message type kar dein.",
+}
 STALE_SEND_ERROR = (
     "Worker stopped while sending; delivery outcome is unknown and was not retried"
 )
@@ -142,9 +146,12 @@ def prepare_faq_batch(
             if conversation is None or not bot_can_reply(session, conversation, now):
                 _ignore_inbox(current)
                 continue
+            settings = session.execute(
+                select(Tenant.reply_tone, Tenant.default_language).where(Tenant.id == message.tenant_id)
+            ).one()
             if from_voice:
                 if not question:
-                    _prepare_reply(session, current, VOICE_FALLBACK)
+                    _prepare_reply(session, current, VOICE_FALLBACKS[settings.default_language])
                     prepared += 1
                     continue
                 session.execute(
@@ -184,6 +191,7 @@ def prepare_faq_batch(
                 continue
         result = run_faq_agent(
             question=question, tenant_id=message.tenant_id, model=model, persist_trace=False,
+            tone=settings.reply_tone,
         )
         with session_scope() as session:
             current = _lock_active_claim(session, message)

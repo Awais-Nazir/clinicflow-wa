@@ -12,13 +12,9 @@ def main() -> int:
     parser.add_argument("--provider", choices=("fixture", "ollama"), default="fixture")
     args = parser.parse_args()
     url = os.getenv("CLINICFLOW_TEST_DATABASE_URL", "")
-    target = urlsplit(url)
-    database = target.path.lstrip("/")
     # Legacy integration fixtures reset tables. This command only accepts a
     # dedicated, explicitly configured local database for that reason.
-    if target.hostname not in {"localhost", "127.0.0.1", "::1"} or not database.startswith(
-        ("clinicflow_test", "clinicflow_ci")
-    ):
+    if not is_local_test_database(url):
         parser.error("CLINICFLOW_TEST_DATABASE_URL must point to a local clinicflow_test or clinicflow_ci database")
     env = {**os.environ, "DATABASE_URL": url}
     for arguments in (
@@ -30,6 +26,13 @@ def main() -> int:
         if result.returncode:
             return result.returncode
     return 0
+
+
+def is_local_test_database(url: str) -> bool:
+    target = urlsplit(url)
+    return target.hostname in {"localhost", "127.0.0.1", "::1"} and target.path.lstrip("/").startswith(
+        ("clinicflow_test", "clinicflow_ci", "clinicflow_smoke")
+    )
 
 
 if __name__ == "__main__":

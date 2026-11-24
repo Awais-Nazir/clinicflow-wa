@@ -203,17 +203,20 @@ def seed_demo_clinic(
             "phone_number_id": normalized_phone_number_id,
             "display_phone_number": display_phone_number,
         }
-        session.execute(
+        accepted_phone_id = session.scalar(
             insert(WhatsAppPhoneNumber)
             .values(**number_values)
             .on_conflict_do_update(
                 constraint="uq_whatsapp_phone_numbers_phone_number_id",
                 set_={
-                    "tenant_id": tenant_id,
                     "display_phone_number": display_phone_number,
                 },
+                where=WhatsAppPhoneNumber.tenant_id == tenant_id,
             )
+            .returning(WhatsAppPhoneNumber.id)
         )
+        if accepted_phone_id is None:
+            raise ValueError("phone number already belongs to another tenant")
         session.execute(
             insert(ClinicProfile)
             .values(tenant_id=tenant_id, **DEMO_PROFILE)

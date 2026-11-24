@@ -213,7 +213,7 @@ def test_missing_named_service_cannot_use_unrelated_catalogue() -> None:
         persist_trace=False,
     )
 
-    assert len(model.calls) == 1
+    assert not model.calls
     assert result.used_fallback
     assert result.guardrail_reason == "answer_not_in_clinic_data"
 
@@ -234,7 +234,7 @@ def test_named_service_cannot_reuse_another_services_price() -> None:
     )
 
     assert result.reply == "Hydra facial costs PKR 8500.00."
-    assert len(model.calls) == 1
+    assert not model.calls
 
 
 def test_agent_rejects_invented_numeric_fact(database_engine: Engine) -> None:

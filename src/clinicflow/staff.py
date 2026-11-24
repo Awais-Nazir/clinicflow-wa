@@ -1,6 +1,7 @@
 """Authenticated development staff inbox, replies and conversation controls."""
 
 from datetime import datetime, timezone
+from hashlib import sha256
 import os
 from secrets import compare_digest
 from typing import Annotated
@@ -29,16 +30,21 @@ class StaffReply(BaseModel):
 def _staff_tenant(authorization: Annotated[str | None, Header()] = None) -> int:
     token = os.getenv("STAFF_DEV_TOKEN", "")
     slug = os.getenv("STAFF_DEV_TENANT_SLUG", "")
-    if len(token) < 32 or not slug:
-        raise HTTPException(404)
-    if not authorization or not compare_digest(
-        authorization.encode(), f"Bearer {token}".encode()
-    ):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, headers={"WWW-Authenticate": "Bearer"})
+    presented = authorization.removeprefix("Bearer ")
+    if not 32 <= len(presented) <= 256:
         raise HTTPException(401, headers={"WWW-Authenticate": "Bearer"})
     with session_scope() as session:
-        tenant_id = session.scalar(select(Tenant.id).where(Tenant.slug == slug))
+        tenant_id = session.scalar(select(Tenant.id).where(
+            Tenant.staff_token_hash == sha256(presented.encode()).hexdigest()
+        ))
+        if tenant_id is None and len(token) >= 32 and slug and compare_digest(
+            presented.encode(), token.encode()
+        ):
+            tenant_id = session.scalar(select(Tenant.id).where(Tenant.slug == slug))
     if tenant_id is None:
-        raise HTTPException(404)
+        raise HTTPException(401, headers={"WWW-Authenticate": "Bearer"})
     return tenant_id
 
 

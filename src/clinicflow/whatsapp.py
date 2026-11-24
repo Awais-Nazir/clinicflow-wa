@@ -1,11 +1,13 @@
 """Small client for the WhatsApp Cloud API."""
 
 import os
+from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Self
 
 import httpx
 
+from clinicflow.credentials import CredentialError, resolve_access_token
 from clinicflow.voice import VoiceError
 
 DEFAULT_GRAPH_API_VERSION = "v27.0"
@@ -34,16 +36,20 @@ class WhatsAppClient:
 
     def __init__(
         self,
-        access_token: str,
+        access_token: str | None,
         *,
         api_version: str = DEFAULT_GRAPH_API_VERSION,
         base_url: str = DEFAULT_GRAPH_API_BASE_URL,
         http_client: httpx.Client | None = None,
+        token_resolver: Callable[[str], str] | None = None,
+        allow_local_media: bool = False,
     ) -> None:
-        if not access_token:
+        if not access_token and token_resolver is None:
             raise ValueError("access_token cannot be empty")
 
         self._access_token = access_token
+        self._token_resolver = token_resolver
+        self._allow_local_media = allow_local_media
         self._api_version = api_version.strip("/")
         self._base_url = base_url.rstrip("/")
         self._http_client = http_client or httpx.Client(
@@ -53,19 +59,23 @@ class WhatsAppClient:
 
     @classmethod
     def from_environment(cls) -> Self:
-        """Build a client from Phase 0's single Meta access token."""
+        """Use tenant credentials, or an explicit loopback emulator with a fake token."""
 
-        access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-        if not access_token:
-            raise RuntimeError("WHATSAPP_ACCESS_TOKEN is not configured")
-
-        return cls(
-            access_token,
-            api_version=os.getenv(
-                "META_GRAPH_API_VERSION",
-                DEFAULT_GRAPH_API_VERSION,
-            ),
-        )
+        api_version = os.getenv("META_GRAPH_API_VERSION", DEFAULT_GRAPH_API_VERSION)
+        base_url = os.getenv("META_GRAPH_API_BASE_URL", DEFAULT_GRAPH_API_BASE_URL).rstrip("/")
+        if base_url != DEFAULT_GRAPH_API_BASE_URL:
+            base = httpx.URL(base_url)
+            if (
+                base.host not in {"localhost", "127.0.0.1", "::1"}
+                or base.scheme not in {"http", "https"}
+                or base.userinfo or base.path != "/" or base.query or base.fragment
+            ):
+                raise ValueError("Graph API override must be a loopback emulator URL")
+            return cls(
+                "clinicflow-emulator-only", base_url=base_url,
+                api_version=api_version, allow_local_media=True,
+            )
+        return cls(None, api_version=api_version, token_resolver=resolve_access_token)
 
     def send_text(
         self,
@@ -113,7 +123,7 @@ class WhatsAppClient:
             response = self._http_client.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {self._access_token}",
+                    "Authorization": f"Bearer {self._token_for_phone(phone_number_id)}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
@@ -157,8 +167,8 @@ class WhatsAppClient:
 
         if not media_id.isascii() or not media_id.isdecimal() or max_bytes < 1:
             raise VoiceError("invalid audio reference")
-        headers = {"Authorization": f"Bearer {self._access_token}"}
         try:
+            headers = {"Authorization": f"Bearer {self._token_for_phone(phone_number_id)}"}
             metadata = self._http_client.get(
                 f"{self._base_url}/{self._api_version}/{media_id}",
                 params={"phone_number_id": phone_number_id},
@@ -176,7 +186,11 @@ class WhatsAppClient:
             if not isinstance(raw_url, str):
                 raise VoiceError("missing audio URL")
             url = httpx.URL(raw_url)
-            if not _authorized_media_url(url):
+            base = httpx.URL(self._base_url)
+            same_origin = (url.scheme, url.host, url.port) == (base.scheme, base.host, base.port)
+            if not _authorized_media_url(url) and not (
+                self._allow_local_media and same_origin and not url.userinfo
+            ):
                 raise VoiceError("unrecognized WhatsApp media host")
             with self._http_client.stream(
                 "GET", url, headers=headers, follow_redirects=False,
@@ -191,8 +205,17 @@ class WhatsAppClient:
                         raise VoiceError("audio exceeds the size limit")
                     audio.extend(chunk)
                 return bytes(audio)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError, TypeError) as error:
+        except (WhatsAppAPIError, httpx.HTTPError, httpx.InvalidURL, ValueError, TypeError) as error:
             raise VoiceError("could not retrieve WhatsApp audio") from error
+
+    def _token_for_phone(self, phone_number_id: str) -> str:
+        if self._token_resolver is None:
+            assert self._access_token is not None
+            return self._access_token
+        try:
+            return self._token_resolver(phone_number_id)
+        except CredentialError as error:
+            raise WhatsAppRejectedError("WhatsApp credentials are unavailable for this number") from error
 
     def close(self) -> None:
         if self._owns_http_client:

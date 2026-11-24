@@ -1,0 +1,54 @@
+{
+  "slug": "mehr-clinic-demo",
+  "name": "Mehr Clinic (Demo)",
+  "timezone": "Asia/Karachi",
+  "reply_tone": "formal",
+  "default_language": "ur",
+  "phone_number_id": "700000000000002",
+  "profile": {
+    "description": "A fictional second clinic for testing tenant isolation.",
+    "address": "8 Sample Lane",
+    "city": "Islamabad",
+    "country": "Pakistan",
+    "contact_phone": "+92 300 0000001",
+    "email": "hello@mehr-clinic.example"
+  },
+  "hours": [
+    {"weekday": 1, "opens_at": "12:00", "closes_at": "17:00"},
+    {"weekday": 3, "opens_at": "12:00", "closes_at": "17:00"},
+    {"weekday": 5, "opens_at": "09:00", "closes_at": "13:00"}
+  ],
+  "services": [
+    {
+      "name": "Wellness consultation",
+      "description": "A fictional consultation at the demonstration clinic.",
+      "price_amount": "4200.00",
+      "duration_minutes": 45
+    }
+  ],
+  "providers": [
+    {
+      "name": "Dr. Sana Iqbal",
+      "specialty": "General Physician",
+      "services": ["Wellness consultation"],
+      "hours": [
+        {"weekday": 1, "opens_at": "12:00", "closes_at": "17:00"},
+        {"weekday": 3, "opens_at": "12:00", "closes_at": "17:00"},
+        {"weekday": 5, "opens_at": "09:00", "closes_at": "13:00"}
+      ]
+    }
+  ],
+  "knowledge": [
+    {
+      "source_key": "mehr-courtyard",
+      "title": "Waiting area",
+      "content": "Visitors may wait in the cedar courtyard until reception calls them."
+    },
+    {
+      "source_key": "mehr-reception-urdu",
+      "title": "استقبالیہ",
+      "content": "کلینک پہنچنے پر استقبالیہ پر اپنا نام بتائیں۔",
+      "language": "ur"
+    }
+  ]
+}
