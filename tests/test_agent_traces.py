@@ -86,7 +86,7 @@ def test_completed_run_persists_full_tenant_scoped_trace(
     )
 
     result = run_faq_agent(
-        question="How much is a general consultation?",
+        question="What are the services and prices?",
         tenant_id=tenant.id,
         conversation_id=conversation.id,
         model=model,
@@ -97,7 +97,7 @@ def test_completed_run_persists_full_tenant_scoped_trace(
     trace = get_agent_run(tenant.id, result.trace_id)
     assert trace is not None
     assert trace.conversation_id == conversation.id
-    assert trace.prompt_version == "faq-v1"
+    assert trace.prompt_version == "faq-v4"
     assert trace.model_name == "trace-test-model"
     assert trace.status == "completed"
     assert trace.guardrail_reason is None

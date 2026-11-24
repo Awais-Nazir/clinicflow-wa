@@ -74,6 +74,28 @@ class WhatsAppClient:
     ) -> str:
         """Send text and return the provider's WhatsApp message ID."""
 
+        return self._send_message(phone_number_id, recipient_id, {
+            "type": "text", "text": {"preview_url": False, "body": body},
+        })
+
+    def send_buttons(
+        self, *, phone_number_id: str, recipient_id: str, body: str,
+        buttons: list[dict[str, str]],
+    ) -> str:
+        """Send a session reply with actions bound to the offered draft."""
+
+        return self._send_message(phone_number_id, recipient_id, {
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": body},
+                "action": {"buttons": [{"type": "reply", "reply": item} for item in buttons]},
+            },
+        })
+
+    def _send_message(
+        self, phone_number_id: str, recipient_id: str, message: dict[str, object],
+    ) -> str:
         url = (
             f"{self._base_url}/{self._api_version}/"
             f"{phone_number_id}/messages"
@@ -82,11 +104,7 @@ class WhatsAppClient:
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
             "to": recipient_id,
-            "type": "text",
-            "text": {
-                "preview_url": False,
-                "body": body,
-            },
+            **message,
         }
 
         try:

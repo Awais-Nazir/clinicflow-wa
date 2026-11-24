@@ -4,14 +4,15 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
-class InboundTextMessage:
-    """The fields needed to persist and later process an inbound text message."""
+class InboundMessage:
+    """The fields needed to persist and process a supported user message."""
 
     message_id: str
     sender_id: str
     phone_number_id: str
     timestamp: str
     text: str
+    message_type: str = "text"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +36,7 @@ def _list(value: object) -> list[object]:
     return []
 
 
-def extract_text_messages(payload: object) -> list[InboundTextMessage]:
+def extract_messages(payload: object) -> list[InboundMessage]:
     """Extract supported inbound messages and ignore every other event type."""
 
     if not isinstance(payload, dict):
@@ -43,7 +44,7 @@ def extract_text_messages(payload: object) -> list[InboundTextMessage]:
     if payload.get("object") != "whatsapp_business_account":
         return []
 
-    extracted: list[InboundTextMessage] = []
+    extracted: list[InboundMessage] = []
     for entry in _list(payload.get("entry")):
         if not isinstance(entry, dict):
             continue
@@ -64,11 +65,22 @@ def extract_text_messages(payload: object) -> list[InboundTextMessage]:
                 continue
 
             for message in _list(value.get("messages")):
-                if not isinstance(message, dict) or message.get("type") != "text":
+                if not isinstance(message, dict):
                     continue
 
-                text_object = message.get("text")
-                if not isinstance(text_object, dict):
+                message_type = message.get("type")
+                if message_type == "text":
+                    text_object = message.get("text")
+                    content = text_object.get("body") if isinstance(text_object, dict) else None
+                elif message_type == "interactive":
+                    interactive = message.get("interactive")
+                    if not isinstance(interactive, dict) or interactive.get("type") != "button_reply":
+                        continue
+                    button = interactive.get("button_reply")
+                    content = button.get("id") if isinstance(button, dict) else None
+                    if not isinstance(content, str) or not content.startswith("booking:"):
+                        continue
+                else:
                     continue
 
                 message_id = _non_empty_string(message.get("id"))
@@ -81,7 +93,7 @@ def extract_text_messages(payload: object) -> list[InboundTextMessage]:
                     message.get("from_user_id")
                 )
                 timestamp = _non_empty_string(message.get("timestamp"))
-                text = _non_empty_string(text_object.get("body"))
+                text = _non_empty_string(content)
 
                 if (
                     message_id is None
@@ -92,12 +104,13 @@ def extract_text_messages(payload: object) -> list[InboundTextMessage]:
                     continue
 
                 extracted.append(
-                    InboundTextMessage(
+                    InboundMessage(
                         message_id=message_id,
                         sender_id=sender_id,
                         phone_number_id=phone_number_id,
                         timestamp=timestamp,
                         text=text,
+                        message_type=message_type,
                     )
                 )
 

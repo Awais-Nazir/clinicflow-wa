@@ -55,10 +55,26 @@ provider-independent so this change does not affect tenant or retrieval logic.
    scores by category, and fail the command when a regression is detected. The
    current deterministic fixture is a zero-cost pipeline baseline, not a claim
    about real-model answer quality.
-8. **Free development model and WhatsApp integration** — add a real no-cost
-   development model adapter, run the same eval cases against it, then replace
-   the Phase 0 echo preparation with grounded FAQ replies and test the complete
-   WhatsApp path.
+8. **Free development model and WhatsApp integration**
+   - ✅ **Ollama adapter** — call a configurable local model through Ollama's
+     chat and tool-calling API, with zero token cost and no external API key.
+   - ✅ **Real-model baseline** — `qwen3:4b` scores 9/25 before tuning. The
+     deterministic unanswerable path passes 4/4; most failures come from the
+     small model skipping the required clinic tool and being safely rejected.
+   - ✅ **Tool-routing tune** — clarify when to call each tool and use the
+     localized fallback when the tool output lacks the answer. With the tuned
+     prompt, the pinned Qwen3-4B-Instruct model scores 12/25
+     (clinic info 5/6, services 1/6, policy 3/6, unanswerable 3/4,
+     multilingual 0/3). Llama 3.2 scored up to 10/25 in exploratory runs.
+   - ✅ **Grounding and eval follow-up** — render named prices from the
+     catalogue and scope recognized service and doctor lookups to the requested
+     record. Compare whole times, equivalent number formats, Urdu-script
+     replies, and documented policy paraphrases. The selected local model
+     passed all 25 revised cases.
+   - ✅ **Local worker connection** — in FAQ mode, save the trace and the
+     outbound intent together. Verify signed webhook ingestion, real Ollama
+     inference, and one simulated send on a fresh database. Live Meta delivery
+     for FAQ mode requires a deployment with access to a configured model.
 
 Each checkpoint stays small enough to inspect, test, and understand before we
 move to the next one.

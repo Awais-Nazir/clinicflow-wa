@@ -6,7 +6,16 @@ import re
 import unicodedata
 
 NUMBER_PATTERN = re.compile(
-    r"(?<![\w])[-+]?\d(?:[\d,.\u066b\u066c]*\d)?(?![\w])"
+    r"(?<![\w:])(?:"
+    r"\d{1,2}:\d{2}(?::\d{2})?(?:[ \t]*[ap]\.?m\.?)?"
+    r"|\d{1,2}[ \t]*[ap]\.?m\.?"
+    r"|[-+]?\d(?:[\d,.\u066b\u066c]*\d)?"
+    r")(?![\w:])",
+    re.IGNORECASE,
+)
+TIME_PATTERN = re.compile(
+    r"(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?(?:[ \t]*([ap])\.?m\.?)?",
+    re.IGNORECASE,
 )
 NON_FACT_KEYS = {"score", "latency_ms"}
 
@@ -42,14 +51,39 @@ def check_numeric_grounding(
 
 
 def extract_text_numbers(text: str) -> set[str]:
-    """Extract canonical decimal values from ASCII or Urdu/Arabic digits."""
+    """Extract canonical numbers and whole clock times from text."""
 
     numbers: set[str] = set()
     for match in NUMBER_PATTERN.finditer(text):
-        normalized = _normalize_number(match.group())
+        normalized = normalize_fact_token(match.group())
         if normalized is not None:
             numbers.add(normalized)
     return numbers
+
+
+def normalize_fact_token(raw: str) -> str | None:
+    """Return a canonical decimal or local clock time for one entire token."""
+
+    if NUMBER_PATTERN.fullmatch(raw) is None:
+        return None
+    if ":" not in raw and raw[-1].casefold() not in {"m", "."}:
+        return _normalize_number(raw)
+
+    match = TIME_PATTERN.fullmatch(raw)
+    if match is None:
+        return raw.casefold()
+    hour_text, minute_text, second_text, suffix = match.groups()
+    hour = int(hour_text)
+    minute = int(minute_text or "0")
+    second = int(second_text or "0")
+    if minute > 59 or second > 59 or (suffix and not 1 <= hour <= 12):
+        return raw.casefold()
+    if suffix:
+        hour = hour % 12 + (12 if suffix.casefold() == "p" else 0)
+    if hour > 23:
+        return raw.casefold()
+    normalized = f"{hour:02d}:{minute:02d}"
+    return f"{normalized}:{second:02d}" if second else normalized
 
 
 def extract_value_numbers(value: object) -> set[str]:

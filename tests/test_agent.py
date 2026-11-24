@@ -9,6 +9,7 @@ from sqlalchemy import Engine, create_engine, text
 from clinicflow.agent import (
     AgentMessage,
     ModelTurn,
+    NO_CLINIC_ANSWER,
     TokenUsage,
     ToolCallRequest,
     detect_reply_language,
@@ -79,7 +80,7 @@ def test_agent_executes_tool_then_returns_grounded_answer(
     )
 
     result = run_faq_agent(
-        question="How much is the Hydra facial?",
+        question="What are the services and prices?",
         tenant_id=tenant.id,
         model=model,
     )
@@ -167,6 +168,73 @@ def test_tool_error_is_returned_to_model_and_cannot_ground_answer(
     assert result.tool_events[0].error is not None
     assert "unexpected: tenant_id" in result.tool_events[0].error
     assert "error" in model.calls[1][-1].content
+
+
+def test_agent_uses_localized_fallback_when_tool_result_lacks_answer(
+    database_engine: Engine,
+) -> None:
+    tenant = seed_demo_clinic("phone-456")
+    model = ScriptedModel(
+        [
+            ModelTurn(
+                tool_calls=(
+                    ToolCallRequest(id="call-1", name="get_services", arguments={}),
+                )
+            ),
+            ModelTurn(text=NO_CLINIC_ANSWER),
+        ]
+    )
+
+    result = run_faq_agent(
+        question="Laser treatment available hai?",
+        tenant_id=tenant.id,
+        model=model,
+    )
+
+    assert result.tool_events[0].error is None
+    assert result.used_fallback
+    assert result.guardrail_reason == "answer_not_in_clinic_data"
+    assert result.reply == "Mujhe clinic ki available maloomat mein iska jawab nahi mila."
+
+
+def test_missing_named_service_cannot_use_unrelated_catalogue() -> None:
+    model = ScriptedModel(
+        [
+            ModelTurn(tool_calls=(ToolCallRequest("lookup", "get_services", {}),)),
+            ModelTurn(text="No, we do not provide laser treatment."),
+        ]
+    )
+    tenant = seed_demo_clinic("faq-missing-service-test")
+
+    result = run_faq_agent(
+        question="Do you provide laser treatment?",
+        tenant_id=tenant.id,
+        model=model,
+        persist_trace=False,
+    )
+
+    assert len(model.calls) == 1
+    assert result.used_fallback
+    assert result.guardrail_reason == "answer_not_in_clinic_data"
+
+
+def test_named_service_cannot_reuse_another_services_price() -> None:
+    model = ScriptedModel(
+        [
+            ModelTurn(tool_calls=(ToolCallRequest("lookup", "get_services", {}),)),
+            ModelTurn(text="The Hydra facial costs PKR 3000."),
+        ]
+    )
+    tenant = seed_demo_clinic("faq-price-scope-test")
+    result = run_faq_agent(
+        question="How much is the Hydra facial?",
+        tenant_id=tenant.id,
+        model=model,
+        persist_trace=False,
+    )
+
+    assert result.reply == "Hydra facial costs PKR 8500.00."
+    assert len(model.calls) == 1
 
 
 def test_agent_rejects_invented_numeric_fact(database_engine: Engine) -> None:

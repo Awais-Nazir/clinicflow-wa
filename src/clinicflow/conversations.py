@@ -157,7 +157,10 @@ def record_message_in_session(
             Conversation.id == conversation_id,
             Conversation.tenant_id == tenant_id,
         )
-        .values(last_message_at=message_time, updated_at=func.now())
+        .values(
+            last_message_at=func.greatest(Conversation.last_message_at, message_time),
+            updated_at=func.now(),
+        )
     )
 
     return True

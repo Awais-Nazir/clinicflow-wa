@@ -8,16 +8,33 @@ from time import perf_counter
 from typing import Literal, Protocol
 
 from clinicflow.agent_tools import ClinicToolbox, ToolExecutionError
+from clinicflow.faq_evidence import (
+    is_named_price_question,
+    render_service_price,
+    scope_faq_evidence,
+)
 from clinicflow.grounding import check_numeric_grounding
 
-SYSTEM_PROMPT = """You are a clinic information assistant.
-Use the available tools before answering factual questions.
-Use only facts returned by tools; never invent services, prices, hours, doctors,
-policies, or medical claims. If the answer is absent, say you do not know based
-on the clinic's available information. Reply in the same language and script as
-the customer. Do not diagnose conditions or recommend treatment.
+NO_CLINIC_ANSWER = "NO_CLINIC_ANSWER"
+SYSTEM_PROMPT = f"""You answer clinic FAQ messages. For a clinic question,
+your first response must call the relevant tool:
+- get_services for treatments offered, prices, or treatment durations.
+- get_clinic_info for hours, location, contact details, or doctors.
+- search_kb for policies and FAQs such as cancellation, payments, parking,
+  or what help the clinic offers over WhatsApp. Pass short English keywords in
+  the query argument.
+The two list tools take no arguments. If a tool reports invalid arguments,
+retry the call with the correct arguments.
+
+After the tool returns, answer the specific question briefly in the customer's
+language and script. Use only the relevant facts in the result. Copy numeric
+values as given, using local digits if appropriate. Use plain bullets for lists.
+A result on a related topic
+or a list that omits the requested person or treatment is insufficient. If the
+result does not answer the question, output only {NO_CLINIC_ANSWER}. Never
+diagnose or recommend treatment.
 """
-PROMPT_VERSION = "faq-v1"
+PROMPT_VERSION = "faq-v4"
 MAX_MODEL_ROUNDS = 4
 MAX_TOOL_CALLS = 8
 
@@ -66,6 +83,10 @@ class AgentModel(Protocol):
         tools: list[dict[str, object]],
     ) -> ModelTurn:
         """Return either tool calls or a final assistant response."""
+
+
+class AgentModelError(RuntimeError):
+    """The configured model could not complete its request."""
 
 
 @dataclass(frozen=True)
@@ -130,6 +151,14 @@ def fallback_reply(language: ReplyLanguage) -> str:
     return "I couldn't find that in the clinic information available to me."
 
 
+def _model_unavailable_reply(language: ReplyLanguage) -> str:
+    if language == "ur":
+        return "میں ابھی کلینک کی معلومات چیک نہیں کر سکا۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔"
+    if language == "roman_ur":
+        return "Abhi clinic ki maloomat check nahi ho saki. Thori dair baad dobara try karein."
+    return "I couldn't check the clinic information right now. Please try again shortly."
+
+
 def run_faq_agent(
     *,
     question: str,
@@ -158,10 +187,15 @@ def run_faq_agent(
     has_evidence = False
     fallback_reason = "no_grounding_evidence"
     unsupported_numbers: tuple[str, ...] = ()
+    grounded_reply: str | None = None
     run_started = perf_counter()
 
     for _ in range(MAX_MODEL_ROUNDS):
-        turn = model.complete(tuple(messages), active_toolbox.definitions())
+        try:
+            turn = model.complete(tuple(messages), active_toolbox.definitions())
+        except AgentModelError:
+            fallback_reason = "model_unavailable"
+            break
         input_tokens += turn.usage.input_tokens
         output_tokens += turn.usage.output_tokens
         cost_usd += turn.usage.cost_usd
@@ -177,6 +211,7 @@ def run_faq_agent(
                     tool_calls=turn.tool_calls,
                 )
             )
+            missing_record = False
             for call in turn.tool_calls:
                 tool_started = perf_counter()
                 try:
@@ -186,6 +221,17 @@ def run_faq_agent(
                     output = None
                 else:
                     error_text = None
+                    scoped = scope_faq_evidence(normalized_question, call.name, output)
+                    if scoped is None:
+                        missing_record = True
+                        output = {"missing_requested_record": True}
+                    else:
+                        output = scoped
+                        if call.name == "get_services" and is_named_price_question(
+                            normalized_question
+                        ):
+                            grounded_reply = render_service_price(output)
+                            missing_record = missing_record or grounded_reply is None
                     has_evidence = has_evidence or _contains_evidence(output)
 
                 latency_ms = round((perf_counter() - tool_started) * 1000)
@@ -215,10 +261,20 @@ def run_faq_agent(
                         name=call.name,
                     )
                 )
+            if missing_record:
+                grounded_reply = None
+                fallback_reason = "answer_not_in_clinic_data"
+                break
+            if grounded_reply is not None:
+                break
             continue
 
-        if turn.text and turn.text.strip() and has_evidence:
-            proposed_reply = turn.text.strip()
+        proposed_reply = (turn.text or "").strip()
+        if proposed_reply == NO_CLINIC_ANSWER:
+            fallback_reason = "answer_not_in_clinic_data"
+            break
+
+        if proposed_reply and has_evidence:
             numeric_check = check_numeric_grounding(
                 proposed_reply,
                 [
@@ -256,7 +312,11 @@ def run_faq_agent(
         fallback_reason = "model_round_limit"
 
     result = _result(
-        reply=fallback_reply(language),
+        reply=grounded_reply or (
+            _model_unavailable_reply(language)
+            if fallback_reason == "model_unavailable"
+            else fallback_reply(language)
+        ),
         language=language,
         model=model,
         tool_events=tool_events,
@@ -264,8 +324,8 @@ def run_faq_agent(
         output_tokens=output_tokens,
         cost_usd=cost_usd,
         run_started=run_started,
-        used_fallback=True,
-        guardrail_reason=fallback_reason,
+        used_fallback=grounded_reply is None,
+        guardrail_reason=fallback_reason if grounded_reply is None else None,
         unsupported_numbers=unsupported_numbers,
     )
     return _persist_result(
@@ -278,15 +338,10 @@ def run_faq_agent(
 
 
 def _contains_evidence(output: dict[str, object]) -> bool:
-    services = output.get("services")
-    if isinstance(services, list) and services:
-        return True
-    results = output.get("results")
-    if isinstance(results, list) and results:
-        return True
-    if output.get("profile") is not None:
-        return True
-    return False
+    return output.get("profile") is not None or any(
+        isinstance(output.get(key), list) and bool(output[key])
+        for key in ("services", "doctors", "opening_hours", "results")
+    )
 
 
 def _result(

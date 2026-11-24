@@ -11,14 +11,14 @@ from clinicflow.conversations import (
     record_message_in_session,
 )
 from clinicflow.database import session_scope
-from clinicflow.events import InboundTextMessage
+from clinicflow.events import InboundMessage
 from clinicflow.models import InboxMessage, Tenant, WhatsAppPhoneNumber
 
 LOGGER = logging.getLogger(__name__)
 
 
-def enqueue_text_messages(
-    messages: list[InboundTextMessage],
+def enqueue_messages(
+    messages: list[InboundMessage],
     payload: dict[str, object],
 ) -> int:
     """Insert new messages and silently skip already-seen Meta message IDs."""
@@ -65,7 +65,7 @@ def enqueue_text_messages(
                     message_id=message.message_id,
                     phone_number_id=message.phone_number_id,
                     sender_id=message.sender_id,
-                    message_type="text",
+                    message_type=message.message_type,
                     body=message.text,
                     message_timestamp=message_time,
                     payload=payload,
@@ -84,8 +84,8 @@ def enqueue_text_messages(
                 conversation_id=conversation.id,
                 external_message_id=message.message_id,
                 direction="inbound",
-                message_type="text",
-                body=message.text,
+                message_type=message.message_type,
+                body=message.text if message.message_type == "text" else None,
                 occurred_at=message_time,
             )
             inserted_count += 1

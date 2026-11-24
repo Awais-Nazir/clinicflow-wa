@@ -1,6 +1,7 @@
 """Integration tests for the versioned Phase 1 evaluation suite."""
 
 from collections import Counter
+from dataclasses import replace
 import os
 
 import pytest
@@ -82,3 +83,24 @@ def test_eval_suite_reports_a_regression() -> None:
     assert "FAIL deliberate-failure" in report
     assert "fallback expected False, got True" in report
     assert "reply missing 'invented answer'" in report
+
+
+@requires_database
+def test_eval_accepts_equivalent_price_and_clock_formats() -> None:
+    tenant = seed_demo_clinic("eval-phone-number")
+    replies = {
+        "hydra-price-en": "The Hydra facial costs 8,500 PKR.",
+        "monday-hours-en": "Monday hours are 10 am to 7 pm.",
+        "monday-hours-ur": "کلینک پیر کو 10:00 سے 19:00 تک کھلا ہے۔",
+    }
+    cases = [
+        replace(case, fixture_reply=replies[case.id])
+        for case in load_eval_cases()
+        if case.id in replies
+    ]
+
+    summary = run_eval_suite(
+        cases=cases, tenant_id=tenant.id, model_factory=FixtureEvalModel
+    )
+
+    assert summary.passed == summary.total == 3

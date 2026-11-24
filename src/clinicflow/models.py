@@ -22,6 +22,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -105,6 +106,7 @@ class ClinicService(Base):
 
     __tablename__ = "clinic_services"
     __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_clinic_services_id_tenant"),
         UniqueConstraint(
             "tenant_id",
             "name",
@@ -296,6 +298,7 @@ class Conversation(Base):
     last_message_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    booking_draft: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -306,6 +309,96 @@ class Conversation(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class Provider(Base):
+    """A bookable clinician or resource owned by one clinic."""
+
+    __tablename__ = "providers"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_providers_id_tenant"),
+        UniqueConstraint("tenant_id", "name", name="uq_providers_tenant_name"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"))
+    name: Mapped[str] = mapped_column(String(160))
+    is_active: Mapped[bool] = mapped_column(Boolean, server_default="true")
+
+
+class ProviderHours(Base):
+    """One bookable local working window per provider and weekday."""
+
+    __tablename__ = "provider_hours"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["provider_id", "tenant_id"], ["providers.id", "providers.tenant_id"],
+            name="fk_provider_hours_provider_tenant",
+        ),
+        CheckConstraint("weekday BETWEEN 0 AND 6", name="ck_provider_hours_weekday"),
+        CheckConstraint("opens_at < closes_at", name="ck_provider_hours_interval"),
+    )
+
+    provider_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    weekday: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger)
+    opens_at: Mapped[time] = mapped_column(Time)
+    closes_at: Mapped[time] = mapped_column(Time)
+
+
+class ProviderService(Base):
+    """Services a provider may perform, within one tenant."""
+
+    __tablename__ = "provider_services"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["provider_id", "tenant_id"], ["providers.id", "providers.tenant_id"],
+            name="fk_provider_services_provider_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["service_id", "tenant_id"], ["clinic_services.id", "clinic_services.tenant_id"],
+            name="fk_provider_services_service_tenant",
+        ),
+    )
+
+    tenant_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    provider_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    service_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+
+class Appointment(Base):
+    """A customer's booked or cancelled appointment with UTC endpoints."""
+
+    __tablename__ = "appointments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "provider_id", "service_id"],
+            ["provider_services.tenant_id", "provider_services.provider_id", "provider_services.service_id"],
+            name="fk_appointments_offering",
+        ),
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id"], ["conversations.id", "conversations.tenant_id"],
+            name="fk_appointments_conversation_tenant",
+        ),
+        CheckConstraint("starts_at < ends_at", name="ck_appointments_interval"),
+        CheckConstraint("status IN ('booked', 'cancelled')", name="ck_appointments_status"),
+        Index(
+            "uq_appointments_booked_provider_start", "provider_id", "starts_at",
+            unique=True, postgresql_where=text("status = 'booked'"),
+        ),
+        Index("ix_appointments_conversation_start", "conversation_id", "starts_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger)
+    conversation_id: Mapped[int] = mapped_column(BigInteger)
+    provider_id: Mapped[int] = mapped_column(BigInteger)
+    service_id: Mapped[int] = mapped_column(BigInteger)
+    customer_name: Mapped[str] = mapped_column(String(160))
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), server_default="booked")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ConversationMessage(Base):
@@ -475,6 +568,7 @@ class InboxMessage(Base):
         server_default=func.now(),
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    faq_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
 
 
@@ -499,6 +593,7 @@ class OutboxMessage(Base):
     recipient_id: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[str] = mapped_column(String(32), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    reply_buttons: Mapped[list[dict[str, str]] | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

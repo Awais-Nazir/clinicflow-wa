@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 
 from clinicflow.events import (
     FailedDelivery,
-    InboundTextMessage,
+    InboundMessage,
     extract_failed_deliveries,
-    extract_text_messages,
+    extract_messages,
 )
 from clinicflow.main import app
 
@@ -109,10 +109,10 @@ def post_signed(payload: object) -> int:
 
 
 def test_extracts_an_inbound_text_message() -> None:
-    messages = extract_text_messages(message_payload(text_message()))
+    messages = extract_messages(message_payload(text_message()))
 
     assert messages == [
-        InboundTextMessage(
+        InboundMessage(
             message_id="wamid.message-1",
             sender_id="15551234567",
             phone_number_id="phone-456",
@@ -126,7 +126,7 @@ def test_falls_back_to_user_id_when_phone_number_is_absent() -> None:
     message = text_message()
     message.pop("from")
 
-    messages = extract_text_messages(message_payload(message))
+    messages = extract_messages(message_payload(message))
 
     assert messages[0].sender_id == "US.123456789"
 
@@ -139,7 +139,7 @@ def test_ignores_a_delivery_status(
     monkeypatch.setenv("META_APP_SECRET", APP_SECRET)
     payload = status_payload(delivery_status)
 
-    assert extract_text_messages(payload) == []
+    assert extract_messages(payload) == []
     assert post_signed(payload) == 200
 
 
@@ -165,7 +165,7 @@ def test_ignores_an_unsupported_message_type(
     image_message["image"] = {"id": "media-123"}
     payload = message_payload(image_message)
 
-    assert extract_text_messages(payload) == []
+    assert extract_messages(payload) == []
     assert post_signed(payload) == 200
 
 
@@ -173,4 +173,4 @@ def test_ignores_an_unrelated_webhook_object() -> None:
     payload = message_payload(text_message())
     payload["object"] = "page"
 
-    assert extract_text_messages(payload) == []
+    assert extract_messages(payload) == []

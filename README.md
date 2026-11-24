@@ -7,8 +7,8 @@ multi-clinic isolation.
 
 ## Current milestone
 
-Phase 1: build a grounded FAQ assistant for one fictional clinic on top of the
-completed webhook, inbox, worker, and WhatsApp send pipeline from Phase 0.
+Phase 2 adds booking for the fictional Noor Clinic. The local FAQ worker and
+25-case evaluation suite build on Phase 0's WhatsApp delivery pipeline.
 
 See [the Phase 1 plan](docs/phase-1.md) for the small-step build sequence and
 [the completed Phase 0 plan](docs/phase-0.md) for the deployed foundation.
@@ -55,10 +55,22 @@ Run the Phase 1 FAQ regression suite:
 uv run python -m clinicflow.evals
 ```
 
-It currently uses a deterministic, zero-cost fixture model while exercising
+By default it uses a deterministic, zero-cost fixture model while exercising
 the real tenant-scoped tools and numeric guardrail. Its 25 versioned cases form
-the pipeline baseline; the next checkpoint will run the same cases against a
-real free development model.
+the pipeline baseline. Pass `--provider ollama` to measure the real local model.
+
+For local model evals, start Ollama using its desktop app or run `ollama serve`
+in a separate terminal. Use an isolated local database with the migrations
+applied. The eval runner seeds fictional clinic data into the database it uses.
+
+```powershell
+ollama pull qwen3:4b-instruct-2507-q4_K_M
+uv run python -m clinicflow.evals --provider ollama
+```
+
+Ollama defaults to `http://127.0.0.1:11434`. Set `OLLAMA_BASE_URL` when it is
+running on another port, and use `OLLAMA_MODEL` to test another local model.
+Add `--case hydra-price-en` to run one case while developing.
 
 ## Local PostgreSQL
 
@@ -118,6 +130,13 @@ Run the worker in a separate terminal with the same `DATABASE_URL`:
 ```powershell
 uv run python -m clinicflow.worker
 ```
+
+Set `WORKER_REPLY_MODE=faq` to enable local FAQ and booking replies with Ollama
+running. Run `uv run python -m clinicflow.seed_booking` with the migrated demo
+database and its `WHATSAPP_PHONE_NUMBER_ID` to create the demo provider schedules.
+Then try `Thursday evening Hydra facial book karna hai`. The worker asks for a
+slot and name and reads the details back before confirmation. Reply buttons
+and the exact text `confirm` act on the latest pending draft.
 
 The worker claims pending inbox rows with PostgreSQL `FOR UPDATE SKIP LOCKED`,
 creates one durable `outbox_messages` row per inbound message, and marks the

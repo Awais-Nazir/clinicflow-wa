@@ -11,7 +11,14 @@ def test_number_extraction_normalizes_formats_and_unicode_digits() -> None:
         "Price PKR 8,500.00, time ۱۰:۰۰, Arabic decimal ١٢٫٥."
     )
 
-    assert numbers == {"8500", "10", "0", "12.5"}
+    assert numbers == {"8500", "10:00", "12.5"}
+
+
+def test_clock_times_must_match_as_a_whole() -> None:
+    facts = [{"hours": ["10:30", "19:00"]}]
+
+    assert check_numeric_grounding("۱۰:۳۰ to 7 p.m.", facts).is_supported
+    assert check_numeric_grounding("19:30", facts).unsupported_numbers == ("19:30",)
 
 
 def test_equivalent_price_and_duration_formats_are_supported() -> None:

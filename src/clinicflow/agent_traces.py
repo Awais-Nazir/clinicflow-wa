@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
 
 from clinicflow.database import session_scope
 from clinicflow.models import AgentRun
@@ -43,6 +44,28 @@ def save_agent_run(
 ) -> int:
     """Persist one completed or fallback run and return its trace ID."""
 
+    with session_scope() as session:
+        return save_agent_run_in_session(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            prompt_version=prompt_version,
+            question=question,
+            result=result,
+        )
+
+
+def save_agent_run_in_session(
+    session: Session,
+    *,
+    tenant_id: int,
+    conversation_id: int | None,
+    prompt_version: str,
+    question: str,
+    result: "AgentRunResult",
+) -> int:
+    """Save a trace in the same transaction as its outbound intent."""
+
     serialized_events = [
         {
             "call_id": event.call_id,
@@ -75,9 +98,7 @@ def save_agent_run(
         .returning(AgentRun.id)
     )
 
-    with session_scope() as session:
-        run_id = session.scalar(statement)
-
+    run_id = session.scalar(statement)
     if run_id is None:
         raise RuntimeError("Failed to persist agent run")
     return run_id

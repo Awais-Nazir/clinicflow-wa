@@ -8,7 +8,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.orm import Session, aliased
 
+from clinicflow.agent import AgentModel, PROMPT_VERSION, run_faq_agent
+from clinicflow.agent_traces import save_agent_run_in_session
+from clinicflow.booking_chat import handle_booking_message
+from clinicflow.conversations import record_message_in_session
 from clinicflow.database import session_scope
 from clinicflow.models import InboxMessage, OutboxMessage
 from clinicflow.whatsapp import (
@@ -24,6 +29,7 @@ DEFAULT_POLL_SECONDS = 1.0
 DEFAULT_MAX_SEND_ATTEMPTS = 3
 DEFAULT_RETRY_BASE_SECONDS = 5.0
 DEFAULT_STALE_SEND_SECONDS = 300.0
+FAQ_LEASE = timedelta(minutes=15)
 STALE_SEND_ERROR = (
     "Worker stopped while sending; delivery outcome is unknown and was not retried"
 )
@@ -47,6 +53,7 @@ class ClaimedOutboxMessage:
     phone_number_id: str
     recipient_id: str
     body: str
+    buttons: list[dict[str, str]] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +73,10 @@ def prepare_echo_batch(batch_size: int = DEFAULT_BATCH_SIZE) -> int:
 
     statement = (
         select(InboxMessage)
-        .where(InboxMessage.status == "pending")
+        .where(
+            InboxMessage.status == "pending", InboxMessage.message_type == "text",
+            _faq_claim_available(),
+        )
         .order_by(InboxMessage.id)
         .limit(batch_size)
         .with_for_update(skip_locked=True)
@@ -74,22 +84,135 @@ def prepare_echo_batch(batch_size: int = DEFAULT_BATCH_SIZE) -> int:
 
     with session_scope() as session:
         messages = session.scalars(statement).all()
-        processed_at = datetime.now(timezone.utc)
-
         for message in messages:
-            session.add(
-                OutboxMessage(
-                    inbox_message_id=message.id,
-                    phone_number_id=message.phone_number_id,
-                    recipient_id=message.sender_id,
-                    message_type="text",
-                    body=message.body,
-                )
-            )
-            message.status = "processed"
-            message.processed_at = processed_at
+            _prepare_reply(session, message, message.body)
 
     return len(messages)
+
+
+def prepare_faq_batch(model: AgentModel, batch_size: int = 1) -> int:
+    """Generate outside the database transaction and commit one durable reply."""
+
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    prepared = 0
+    for _ in range(batch_size):
+        message = _claim_faq_message()
+        if message is None:
+            break
+        with session_scope() as session:
+            current = _lock_active_claim(session, message)
+            if current is None:
+                continue
+            booking = handle_booking_message(
+                session,
+                tenant_id=message.tenant_id,
+                conversation_id=message.conversation_id,
+                customer_wa_id=message.sender_id,
+                body=message.body if message.message_type == "text" else "",
+                button_id=message.body if message.message_type == "interactive" else None,
+                now=datetime.now(timezone.utc),
+            )
+            if booking is not None:
+                _prepare_reply(session, current, booking.body, buttons=list(booking.buttons))
+                prepared += 1
+                continue
+        question = message.body.strip()
+        result = (
+            run_faq_agent(
+                question=question,
+                tenant_id=message.tenant_id,
+                model=model,
+                persist_trace=False,
+            )
+            if question
+            else None
+        )
+        with session_scope() as session:
+            current = _lock_active_claim(session, message)
+            if current is None:
+                continue
+            if result is None:
+                current.status = "ignored"
+                current.processed_at = datetime.now(timezone.utc)
+                current.faq_claimed_at = None
+                continue
+            save_agent_run_in_session(
+                session,
+                tenant_id=message.tenant_id,
+                conversation_id=message.conversation_id,
+                prompt_version=PROMPT_VERSION,
+                question=question,
+                result=result,
+            )
+            _prepare_reply(session, current, result.reply)
+            prepared += 1
+    return prepared
+
+
+def _faq_claim_available():
+    return or_(
+        InboxMessage.faq_claimed_at.is_(None),
+        InboxMessage.faq_claimed_at <= datetime.now(timezone.utc) - FAQ_LEASE,
+    )
+
+
+def _lock_active_claim(session: Session, message: InboxMessage) -> InboxMessage | None:
+    return session.scalar(
+        select(InboxMessage)
+        .where(
+            InboxMessage.id == message.id,
+            InboxMessage.status == "pending",
+            InboxMessage.attempts == message.attempts,
+        )
+        .with_for_update()
+    )
+
+
+def _claim_faq_message() -> InboxMessage | None:
+    previous = aliased(InboxMessage)
+    earlier_pending = select(previous.id).where(
+        previous.conversation_id == InboxMessage.conversation_id,
+        previous.id < InboxMessage.id,
+        previous.status == "pending",
+    ).exists()
+    with session_scope() as session:
+        message = session.scalar(
+            select(InboxMessage)
+            .where(
+                InboxMessage.status == "pending",
+                InboxMessage.tenant_id.is_not(None),
+                InboxMessage.conversation_id.is_not(None),
+                _faq_claim_available(),
+                ~earlier_pending,
+            )
+            .order_by(InboxMessage.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if message is not None:
+            message.faq_claimed_at = datetime.now(timezone.utc)
+            message.attempts += 1
+    return message
+
+
+def _prepare_reply(
+    session: Session, message: InboxMessage, body: str,
+    *, buttons: list[dict[str, str]] | None = None,
+) -> None:
+    session.add(
+        OutboxMessage(
+            inbox_message_id=message.id,
+            phone_number_id=message.phone_number_id,
+            recipient_id=message.sender_id,
+            message_type="interactive" if buttons else "text",
+            body=body,
+            reply_buttons=buttons or None,
+        )
+    )
+    message.status = "processed"
+    message.processed_at = datetime.now(timezone.utc)
+    message.faq_claimed_at = None
 
 
 def claim_outbox_batch(
@@ -130,6 +253,7 @@ def claim_outbox_batch(
                     phone_number_id=message.phone_number_id,
                     recipient_id=message.recipient_id,
                     body=message.body,
+                    buttons=message.reply_buttons,
                 )
             )
 
@@ -166,11 +290,7 @@ def send_outbox_batch(
         message = messages[0]
         claimed += 1
         try:
-            provider_message_id = sender.send_text(
-                phone_number_id=message.phone_number_id,
-                recipient_id=message.recipient_id,
-                body=message.body,
-            )
+            provider_message_id = _send_reply(sender, message)
         except WhatsAppUncertainError as exc:
             _mark_outbox_uncertain(message.id, str(exc))
             uncertain += 1
@@ -200,6 +320,17 @@ def send_outbox_batch(
     )
 
 
+def _send_reply(sender: TextSender, message: ClaimedOutboxMessage) -> str:
+    fields = dict(
+        phone_number_id=message.phone_number_id, recipient_id=message.recipient_id,
+        body=message.body,
+    )
+    send_buttons = getattr(sender, "send_buttons", None)
+    if message.buttons and callable(send_buttons):
+        return send_buttons(**fields, buttons=message.buttons)
+    return sender.send_text(**fields)
+
+
 def _mark_outbox_sent(outbox_id: int, provider_message_id: str) -> None:
     with session_scope() as session:
         message = session.get(OutboxMessage, outbox_id)
@@ -212,6 +343,22 @@ def _mark_outbox_sent(outbox_id: int, provider_message_id: str) -> None:
         message.last_error = None
         message.claimed_at = None
         message.next_attempt_at = None
+        inbound = session.get(InboxMessage, message.inbox_message_id)
+        if (
+            inbound is not None
+            and inbound.tenant_id is not None
+            and inbound.conversation_id is not None
+        ):
+            record_message_in_session(
+                session,
+                tenant_id=inbound.tenant_id,
+                conversation_id=inbound.conversation_id,
+                direction="outbound",
+                message_type=message.message_type,
+                external_message_id=provider_message_id,
+                body=message.body,
+                occurred_at=message.sent_at,
+            )
 
 
 def _mark_outbox_failed(outbox_id: int, error: str) -> None:
@@ -302,6 +449,20 @@ def recover_stale_sends(
 def run_forever() -> None:
     """Poll PostgreSQL continuously for new inbox work."""
 
+    from clinicflow.ollama import OllamaModel
+
+    reply_mode = os.getenv("WORKER_REPLY_MODE", "echo").strip().lower()
+    if reply_mode not in {"echo", "faq"}:
+        raise ValueError("WORKER_REPLY_MODE must be echo or faq")
+    model = OllamaModel.from_env() if reply_mode == "faq" else None
+    try:
+        _poll_messages(model)
+    finally:
+        if model is not None:
+            model.close()
+
+
+def _poll_messages(model: AgentModel | None) -> None:
     poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", DEFAULT_POLL_SECONDS))
     max_attempts = int(
         os.getenv("WORKER_MAX_SEND_ATTEMPTS", DEFAULT_MAX_SEND_ATTEMPTS)
@@ -317,7 +478,7 @@ def run_forever() -> None:
     with WhatsAppClient.from_environment() as sender:
         while True:
             recovered = recover_stale_sends(stale_send_seconds)
-            prepared = prepare_echo_batch()
+            prepared = prepare_faq_batch(model) if model is not None else prepare_echo_batch()
             result = send_outbox_batch(
                 sender,
                 max_attempts=max_attempts,

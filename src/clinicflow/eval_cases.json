@@ -150,7 +150,7 @@
     "expect_fallback": false,
     "expected_tool": "search_kb",
     "tool_arguments": {"query": "cancel appointment"},
-    "required_substrings": ["4 hours"],
+    "required_substrings": [["4 hours", "4 ghante", "4 ghantay", "4 ghanton"]],
     "fixture_reply": "Appointment kam az kam 4 hours pehle cancel ya reschedule karein."
   },
   {
@@ -194,7 +194,10 @@
     "expect_fallback": false,
     "expected_tool": "search_kb",
     "tool_arguments": {"query": "medical advice WhatsApp"},
-    "required_substrings": ["cannot diagnose", "consultation with a doctor"],
+    "required_substrings": [
+      "cannot diagnose",
+      ["consultation with a doctor", "consult a doctor", "see a doctor"]
+    ],
     "fixture_reply": "The WhatsApp assistant cannot diagnose or recommend treatment; medical advice requires a consultation with a doctor."
   },
   {
