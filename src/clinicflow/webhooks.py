@@ -12,7 +12,8 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, 
 from fastapi.responses import PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 
-from clinicflow.events import extract_failed_deliveries, extract_messages
+from clinicflow.events import extract_failed_deliveries, extract_messages, extract_staff_echoes
+from clinicflow.handoff import record_staff_echo
 from clinicflow.inbox import enqueue_messages
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -92,16 +93,21 @@ async def receive_whatsapp_webhook(
             detail="Invalid JSON payload",
         ) from error
 
+    for echo in extract_staff_echoes(payload):
+        await run_in_threadpool(
+            record_staff_echo,
+            phone_number_id=echo.phone_number_id, recipient_id=echo.recipient_id,
+            message_id=echo.message_id, message_type=echo.message_type,
+            body=echo.body, occurred_at=echo.occurred_at,
+        )
     messages = extract_messages(payload)
     if messages and isinstance(payload, dict):
         await run_in_threadpool(enqueue_messages, messages, payload)
 
     for failure in extract_failed_deliveries(payload):
         LOGGER.error(
-            "WhatsApp delivery failed message_id=%s code=%s detail=%s",
-            failure.message_id,
+            "WhatsApp delivery failed (provider code %s)",
             failure.error_code,
-            failure.detail,
         )
 
     return Response(status_code=status.HTTP_200_OK)

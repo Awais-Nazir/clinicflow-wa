@@ -1,6 +1,7 @@
 """Unit tests for the WhatsApp Graph API client."""
 
 import httpx
+from clinicflow.voice import VoiceError
 import pytest
 
 from clinicflow.whatsapp import (
@@ -9,6 +10,35 @@ from clinicflow.whatsapp import (
     WhatsAppRetryableError,
     WhatsAppUncertainError,
 )
+
+
+def test_download_audio_scopes_metadata_and_limits_stream() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer test-token"
+        if request.url.host == "graph.facebook.com":
+            assert request.url.params["phone_number_id"] == "phones-1"
+            return httpx.Response(
+                200, json={"url": "https://lookaside.fbsbx.com/audio-fixture", "file_size": 3}
+            )
+        assert request.url.host == "lookaside.fbsbx.com"
+        return httpx.Response(200, headers={"Content-Type": "audio/ogg"}, content=b"Opus")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        client = WhatsAppClient("test-token", http_client=http)
+        assert client.download_audio(phone_number_id="phones-1", media_id="101", max_bytes=4) == b"Opus"
+        with pytest.raises(VoiceError, match="size limit"):
+            client.download_audio(phone_number_id="phones-1", media_id="101", max_bytes=3)
+
+
+def test_download_audio_keeps_meta_token_off_untrusted_hosts() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "graph.facebook.com"
+        return httpx.Response(200, json={"url": "https://example.test/attachment"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        client = WhatsAppClient("test-token", http_client=http)
+        with pytest.raises(VoiceError, match="media host"):
+            client.download_audio(phone_number_id="phones-1", media_id="101", max_bytes=10)
 
 
 def test_send_text_posts_expected_graph_request() -> None:

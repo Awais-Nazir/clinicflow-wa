@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 
+from clinicflow.staff import router as staff_router
 from clinicflow.webhooks import router as webhook_router
 
 app = FastAPI(
@@ -10,6 +11,7 @@ app = FastAPI(
 )
 
 app.include_router(webhook_router)
+app.include_router(staff_router)
 
 
 @app.get("/health", tags=["system"])

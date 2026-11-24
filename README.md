@@ -7,8 +7,8 @@ multi-clinic isolation.
 
 ## Current milestone
 
-Phase 2 adds booking for the fictional Noor Clinic. The local FAQ worker and
-25-case evaluation suite build on Phase 0's WhatsApp delivery pipeline.
+The fictional Noor Clinic supports local FAQ, booking, voice notes, and staff
+handoff. The local evaluations build on Phase 0's WhatsApp delivery pipeline.
 
 See [the Phase 1 plan](docs/phase-1.md) for the small-step build sequence and
 [the completed Phase 0 plan](docs/phase-0.md) for the deployed foundation.
@@ -137,6 +137,40 @@ database and its `WHATSAPP_PHONE_NUMBER_ID` to create the demo provider schedule
 Then try `Thursday evening Hydra facial book karna hai`. The worker asks for a
 slot and name and reads the details back before confirmation. Reply buttons
 and the exact text `confirm` act on the latest pending draft.
+
+### Voice notes
+
+`uv sync --extra voice` installs the local Whisper adapter. Run a local
+benchmark to cache the selected model, then set `VOICE_TRANSCRIBER=whisper` and
+`WHISPER_MODEL` to the same model name in the worker. The worker can also take
+a path to existing converted weights.
+
+```powershell
+uv run --extra voice python -m clinicflow.asr_evals local-notes.json --model tiny --model small --download
+```
+
+Keep the manifest and recordings private. The manifest is a JSON list of
+`{"audio": "note.ogg", "reference": "what was actually said"}` entries, with
+paths relative to the manifest. The command reports word error rate, latency,
+and failures for each model. Select a model using your own Urdu and Roman Urdu
+recordings. A synthetic OGG/Opus smoke test has verified local decoding and
+transcription. The booking flow reads back the proposed details and requires
+a tap or typed confirmation.
+
+### Staff inbox
+
+Set `STAFF_DEV_TOKEN` to a random token of at least 32 characters and
+`STAFF_DEV_TENANT_SLUG` to the demo clinic. Use a Bearer header with
+`GET /staff/handoffs` and `GET /staff/handoffs/{id}`. Staff can post
+`{"request_id": "<uuid>", "text": "A staff reply"}` to
+`/staff/handoffs/{id}/reply` and resume the bot with
+`POST /staff/handoffs/{id}/resume`. Each case includes recent conversation
+context. `HANDOFF_PAUSE_SECONDS=0` keeps manual resume as the default.
+
+For a Coexistence-enabled number, [Meta's staff message echo](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/smb_message_echoes/)
+automatically pauses the bot. The dev inbox is the local fallback for test
+numbers. Live Coexistence requires the business app onboarding flow and a
+connected business number.
 
 The worker claims pending inbox rows with PostgreSQL `FOR UPDATE SKIP LOCKED`,
 creates one durable `outbox_messages` row per inbound message, and marks the

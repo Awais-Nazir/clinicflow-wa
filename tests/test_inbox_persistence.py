@@ -7,6 +7,7 @@ import os
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +17,7 @@ from clinicflow.agent import AgentMessage, AgentModelError, ModelTurn, ToolCallR
 from clinicflow.main import app
 from clinicflow.seed_booking import seed_demo_booking
 from clinicflow.tenants import seed_demo_clinic
+from clinicflow.voice import VoiceProcessor
 from clinicflow.worker import prepare_echo_batch, prepare_faq_batch, send_outbox_batch
 
 APP_SECRET = "test-app-secret"
@@ -296,6 +298,142 @@ def test_whatsapp_booking_confirms_latest_draft_once(
         assert row[0] == "Awais Nazir"
         assert row[1].astimezone(ZoneInfo("Asia/Karachi")).strftime("%H:%M") == "17:30"
         assert row[2] == "cancelled"
+
+
+def test_voice_booking_requires_typed_confirmation(
+    monkeypatch: pytest.MonkeyPatch, database_engine: Engine
+) -> None:
+    monkeypatch.setenv("META_APP_SECRET", APP_SECRET)
+    seed_demo_booking("phone-456")
+    day = datetime.now(ZoneInfo("Asia/Karachi")).date() + timedelta(days=3)
+    if day.weekday() == 6:
+        day += timedelta(days=1)
+
+    class Audio:
+        def download_audio(self, *, phone_number_id, media_id, max_bytes):
+            assert phone_number_id == "phone-456" and max_bytes > 0
+            return media_id.encode()
+
+    class ASR:
+        def transcribe(self, audio, *, max_seconds):
+            assert max_seconds == 60
+            return {
+                b"1": f"Book a Hydra facial on {day} at 17:00. My name is Sam Ali",
+                b"2": "confirm",
+                b"3": "",
+            }[audio]
+
+    voice = VoiceProcessor(Audio(), ASR())
+    with TestClient(app) as client:
+        def turn(sequence, *, media_id=None, text_body=""):
+            payload = inbound_text_payload()
+            message = payload["entry"][0]["changes"][0]["value"]["messages"][0]
+            message["id"] = f"wamid.voice-{sequence}"
+            if media_id:
+                message["type"] = "audio"
+                message["audio"] = {"id": media_id, "mime_type": "audio/ogg; codecs=opus"}
+            else:
+                message["text"]["body"] = text_body
+            raw = json.dumps(payload).encode()
+            assert client.post(WEBHOOK_URL, content=raw, headers=signed_headers(raw)).status_code == 200
+            assert prepare_faq_batch(FaqTestModel(), voice=voice) == 1
+            with database_engine.connect() as connection:
+                return connection.scalar(text("SELECT body FROM outbox_messages ORDER BY id DESC LIMIT 1"))
+
+        proposed = turn(1, media_id="1")
+        assert "Sam Ali" in proposed and str(day) in proposed and "17:00" in proposed
+        assert "tap Confirm or type confirm" in turn(2, media_id="2")
+        with database_engine.connect() as connection:
+            assert connection.scalar(text("SELECT count(*) FROM appointments")) == 0
+        assert "booked" in turn(3, text_body="confirm")
+        assert "type" in turn(4, media_id="3")
+    with database_engine.connect() as connection:
+        assert connection.scalar(text(
+            "SELECT transcript FROM conversation_messages WHERE external_message_id = 'wamid.voice-2'"
+        )) == "confirm"
+        assert connection.scalar(text("SELECT count(*) FROM appointments")) == 1
+
+
+def test_staff_handoff_mutes_bot_and_queues_one_staff_reply(
+    monkeypatch: pytest.MonkeyPatch, database_engine: Engine
+) -> None:
+    monkeypatch.setenv("META_APP_SECRET", APP_SECRET)
+    token = "local-staff-test-token-only-for-tests"
+    monkeypatch.setenv("STAFF_DEV_TOKEN", token)
+    monkeypatch.setenv("STAFF_DEV_TENANT_SLUG", "noor-clinic-demo")
+    seed_demo_clinic("phone-456")
+    auth = {"Authorization": f"Bearer {token}"}
+
+    with TestClient(app) as client:
+        def inbound(sequence, body):
+            payload = inbound_text_payload()
+            message = payload["entry"][0]["changes"][0]["value"]["messages"][0]
+            message["id"] = f"wamid.handoff-{sequence}"
+            message["text"]["body"] = body
+            raw = json.dumps(payload).encode()
+            return client.post(WEBHOOK_URL, content=raw, headers=signed_headers(raw))
+
+        assert inbound(1, "I want to speak to a human").status_code == 200
+        assert prepare_faq_batch(FaqTestModel()) == 1
+        assert inbound(2, "When does the clinic open?").status_code == 200
+        assert prepare_faq_batch(FaqTestModel()) == 0
+        assert client.get("/staff/handoffs").status_code == 401
+        cases = client.get("/staff/handoffs", headers=auth).json()
+        assert [case["reason"] for case in cases] == ["requested_staff"]
+        case_url = f"/staff/handoffs/{cases[0]['id']}"
+        assert client.get(case_url, headers=auth).json()["recent_messages"][-1]["message"]
+        reply = {"request_id": str(uuid4()), "text": "We can help you at reception."}
+        assert client.post(case_url + "/reply", headers=auth, json=reply).json() == {"queued": True}
+        assert client.post(case_url + "/reply", headers=auth, json=reply).json() == {"queued": False}
+        assert client.post(case_url + "/resume", headers=auth).status_code == 204
+        assert inbound(3, "Clinic kab khulti hai?").status_code == 200
+        assert prepare_faq_batch(FaqTestModel()) == 1
+
+    with database_engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT status FROM conversations"
+        )).scalar_one() == "bot"
+        assert connection.scalar(text("SELECT count(*) FROM outbox_messages")) == 3
+
+
+def test_coexistence_staff_echo_suppresses_prepared_bot_reply(
+    monkeypatch: pytest.MonkeyPatch, database_engine: Engine
+) -> None:
+    monkeypatch.setenv("META_APP_SECRET", APP_SECRET)
+    seed_demo_clinic("phone-456")
+    inbound = json.dumps(inbound_text_payload()).encode()
+    echo = {
+        "object": "whatsapp_business_account",
+        "entry": [{"changes": [{
+            "field": "smb_message_echoes",
+            "value": {
+                "metadata": {"phone_number_id": "phone-456"},
+                "message_echoes": [{
+                    "to": "+15551234567", "id": "wamid.staff-echo",
+                    "timestamp": "1749416430", "type": "text",
+                    "text": {"body": "Hello from the clinic team"},
+                }],
+            },
+        }]}],
+    }
+    with TestClient(app) as client:
+        assert client.post(WEBHOOK_URL, content=inbound, headers=signed_headers(inbound)).status_code == 200
+        assert prepare_faq_batch(FaqTestModel()) == 1
+        raw = json.dumps(echo).encode()
+        for _ in range(2):
+            assert client.post(WEBHOOK_URL, content=raw, headers=signed_headers(raw)).status_code == 200
+
+    class Sender:
+        def send_text(self, **fields):
+            pytest.fail("a queued bot reply must be suppressed during a staff handoff")
+
+    assert send_outbox_batch(Sender()).sent == 0
+    with database_engine.connect() as connection:
+        assert connection.scalar(text("SELECT status FROM outbox_messages")) == "suppressed"
+        assert connection.scalar(text("SELECT reason FROM handoff_cases")) == "staff_reply"
+        assert connection.scalar(text(
+            "SELECT count(*) FROM conversation_messages WHERE external_message_id = 'wamid.staff-echo'"
+        )) == 1
 
 
 def test_unknown_phone_number_is_acknowledged_without_creating_work(

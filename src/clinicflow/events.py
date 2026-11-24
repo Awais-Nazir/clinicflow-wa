@@ -1,6 +1,7 @@
 """Classification of authenticated WhatsApp webhook payloads."""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,16 @@ class FailedDelivery:
     message_id: str
     error_code: str
     detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class StaffEcho:
+    phone_number_id: str
+    recipient_id: str
+    message_id: str
+    message_type: str
+    body: str | None
+    occurred_at: datetime
 
 
 def _non_empty_string(value: object) -> str | None:
@@ -80,6 +91,11 @@ def extract_messages(payload: object) -> list[InboundMessage]:
                     content = button.get("id") if isinstance(button, dict) else None
                     if not isinstance(content, str) or not content.startswith("booking:"):
                         continue
+                elif message_type == "audio":
+                    audio = message.get("audio")
+                    content = audio.get("id") if isinstance(audio, dict) else None
+                    if not isinstance(content, str) or not content.isascii() or not content.isdecimal():
+                        continue
                 else:
                     continue
 
@@ -115,6 +131,45 @@ def extract_messages(payload: object) -> list[InboundMessage]:
                 )
 
     return extracted
+
+
+def extract_staff_echoes(payload: object) -> list[StaffEcho]:
+    """Classify staff-originated messages from the Coexistence webhook."""
+
+    if not isinstance(payload, dict) or payload.get("object") != "whatsapp_business_account":
+        return []
+    echoes = []
+    for entry in _list(payload.get("entry")):
+        if not isinstance(entry, dict):
+            continue
+        for change in _list(entry.get("changes")):
+            if not isinstance(change, dict) or change.get("field") != "smb_message_echoes":
+                continue
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+            meta = value.get("metadata")
+            phone = _non_empty_string(meta.get("phone_number_id")) if isinstance(meta, dict) else None
+            if phone is None:
+                continue
+            for message in _list(value.get("message_echoes")):
+                if not isinstance(message, dict):
+                    continue
+                kind = _non_empty_string(message.get("type"))
+                recipient = _non_empty_string(message.get("to")) or _non_empty_string(message.get("to_user_id"))
+                message_id = _non_empty_string(message.get("id"))
+                if not recipient or not message_id or not kind or len(kind) > 32 or kind in {"edit", "revoke"}:
+                    continue
+                try:
+                    occurred_at = datetime.fromtimestamp(int(message.get("timestamp")), tz=timezone.utc)
+                except (ValueError, TypeError, OverflowError, OSError):
+                    continue
+                text = message.get("text")
+                body = _non_empty_string(text.get("body")) if isinstance(text, dict) else None
+                echoes.append(StaffEcho(
+                    phone, recipient.removeprefix("+"), message_id, kind, body, occurred_at,
+                ))
+    return echoes
 
 
 def extract_failed_deliveries(payload: object) -> list[FailedDelivery]:

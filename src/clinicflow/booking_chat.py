@@ -78,7 +78,7 @@ class BookingChat:
 
 def handle_booking_message(
     session: Session, *, tenant_id: int, conversation_id: int, customer_wa_id: str,
-    body: str, button_id: str | None = None, now: datetime,
+    body: str, button_id: str | None = None, from_voice: bool = False, now: datetime,
 ) -> BookingReply | None:
     """Handle a verified booking turn, or leave the question for the FAQ path."""
 
@@ -102,6 +102,8 @@ def handle_booking_message(
         draft = None
 
     text = normalize_booking_text(body).strip(" .!?؟")
+    if from_voice and draft and text in CONFIRM_WORDS:
+        return _say(draft.language, "voice_confirm")
     if button_id is not None or text in CONFIRM_WORDS:
         return _confirm(chat, draft, text, button_id) if draft or button_id else None
     if draft and text in DISMISS_WORDS:
@@ -220,8 +222,9 @@ def _advance_booking(
             chat.save(draft)
             return _say(draft.language, "service", services=", ".join(sorted({row[1] for row in offerings})))
 
-    named = re.fullmatch(
-        r"(?:my name is |name[: ]+|mera naam |میرا نام )(.{1,100})", body.strip(), re.IGNORECASE
+    named = re.search(
+        r"(?:^|[.!؟]\s+)(?:my name is |name[: ]+|mera naam |میرا نام )(.{1,100})$",
+        body.strip(), re.IGNORECASE,
     )
     if named or (draft.waiting_for_name and not updates_slot and text not in DISMISS_WORDS):
         value = named[1] if named else body.strip()
@@ -450,6 +453,7 @@ COPY = {
     "confirm_label": ("Confirm", "Confirm", "تصدیق"),
     "dismiss_label": ("Go back", "Wapas", "واپس"),
     "expired": ("This confirmation has expired. Send your date or request again.", "Yeh confirmation expire ho gayi. Din ya request dobara bhejein.", "اس تصدیق کی مدت گزر گئی۔ دن یا درخواست دوبارہ بھیجیں۔"),
+    "voice_confirm": ("Please check the details above, then tap Confirm or type confirm.", "Details check karein, phir Confirm dabayein ya confirm likhein.", "تفصیلات دیکھیں، پھر تصدیق دبائیں یا confirm لکھیں۔"),
     "discarded": ("Okay, I’ve discarded this request.", "Theek hai, yeh request band kar di.", "ٹھیک ہے، یہ درخواست ختم کر دی۔"),
     "booked": ("Your appointment is booked. Reference #{appointment}.", "Appointment book ho gayi. Reference #{appointment}.", "اپائنٹمنٹ بک ہو گئی۔ حوالہ #{appointment}۔"),
     "rescheduled": ("Your appointment was rescheduled. Reference #{appointment}.", "Appointment ka waqt badal diya. Reference #{appointment}.", "اپائنٹمنٹ کا وقت تبدیل ہو گیا۔ حوالہ #{appointment}۔"),

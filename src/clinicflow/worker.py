@@ -15,7 +15,12 @@ from clinicflow.agent_traces import save_agent_run_in_session
 from clinicflow.booking_chat import handle_booking_message
 from clinicflow.conversations import record_message_in_session
 from clinicflow.database import session_scope
-from clinicflow.models import InboxMessage, OutboxMessage
+from clinicflow.handoff import (
+    MODEL_HANDOFF_REASONS, bot_can_reply, handoff_reason, handoff_reply,
+    lock_conversation, start_handoff,
+)
+from clinicflow.models import Conversation, ConversationMessage, InboxMessage, OutboxMessage
+from clinicflow.voice import VoiceError, VoiceProcessor, WhisperTranscriber
 from clinicflow.whatsapp import (
     WhatsAppAPIError,
     WhatsAppClient,
@@ -30,6 +35,7 @@ DEFAULT_MAX_SEND_ATTEMPTS = 3
 DEFAULT_RETRY_BASE_SECONDS = 5.0
 DEFAULT_STALE_SEND_SECONDS = 300.0
 FAQ_LEASE = timedelta(minutes=15)
+VOICE_FALLBACK = "Voice note samajh nahi aaya. Please apna message type kar dein."
 STALE_SEND_ERROR = (
     "Worker stopped while sending; delivery outcome is unknown and was not retried"
 )
@@ -82,15 +88,23 @@ def prepare_echo_batch(batch_size: int = DEFAULT_BATCH_SIZE) -> int:
         .with_for_update(skip_locked=True)
     )
 
+    prepared = 0
     with session_scope() as session:
         messages = session.scalars(statement).all()
         for message in messages:
+            conversation = _conversation_for_inbox(session, message)
+            if conversation and not bot_can_reply(session, conversation, datetime.now(timezone.utc)):
+                _ignore_inbox(message)
+                continue
             _prepare_reply(session, message, message.body)
+            prepared += 1
 
-    return len(messages)
+    return prepared
 
 
-def prepare_faq_batch(model: AgentModel, batch_size: int = 1) -> int:
+def prepare_faq_batch(
+    model: AgentModel, batch_size: int = 1, *, voice: VoiceProcessor | None = None,
+) -> int:
     """Generate outside the database transaction and commit one durable reply."""
 
     if batch_size < 1:
@@ -100,24 +114,57 @@ def prepare_faq_batch(model: AgentModel, batch_size: int = 1) -> int:
         message = _claim_faq_message()
         if message is None:
             break
+        from_voice = message.message_type == "audio"
+        # Do not fetch or process media in a conversation already owned by staff.
+        if from_voice:
+            with session_scope() as session:
+                current = _lock_active_claim(session, message)
+                if current is None:
+                    continue
+                conversation = _conversation_for_inbox(session, current)
+                if conversation and not bot_can_reply(session, conversation, datetime.now(timezone.utc)):
+                    _ignore_inbox(current)
+                    continue
+        question = _transcribe_message(message, voice) if from_voice else message.body.strip()
         with session_scope() as session:
             current = _lock_active_claim(session, message)
             if current is None:
+                continue
+            now = datetime.now(timezone.utc)
+            conversation = _conversation_for_inbox(session, current)
+            if conversation is None or not bot_can_reply(session, conversation, now):
+                _ignore_inbox(current)
+                continue
+            if from_voice:
+                if not question:
+                    _prepare_reply(session, current, VOICE_FALLBACK)
+                    prepared += 1
+                    continue
+                session.execute(
+                    update(ConversationMessage)
+                    .where(*_voice_message_identity(message))
+                    .values(transcript=question)
+                )
+            reason = handoff_reason(question) if message.message_type != "interactive" else None
+            if reason:
+                start_handoff(session, conversation, reason, now)
+                _prepare_reply(session, current, handoff_reply(question, reason), allow_during_handoff=True)
+                prepared += 1
                 continue
             booking = handle_booking_message(
                 session,
                 tenant_id=message.tenant_id,
                 conversation_id=message.conversation_id,
                 customer_wa_id=message.sender_id,
-                body=message.body if message.message_type == "text" else "",
+                body=question if message.message_type != "interactive" else "",
                 button_id=message.body if message.message_type == "interactive" else None,
-                now=datetime.now(timezone.utc),
+                from_voice=from_voice,
+                now=now,
             )
             if booking is not None:
                 _prepare_reply(session, current, booking.body, buttons=list(booking.buttons))
                 prepared += 1
                 continue
-        question = message.body.strip()
         result = (
             run_faq_agent(
                 question=question,
@@ -133,9 +180,7 @@ def prepare_faq_batch(model: AgentModel, batch_size: int = 1) -> int:
             if current is None:
                 continue
             if result is None:
-                current.status = "ignored"
-                current.processed_at = datetime.now(timezone.utc)
-                current.faq_claimed_at = None
+                _ignore_inbox(current)
                 continue
             save_agent_run_in_session(
                 session,
@@ -145,9 +190,58 @@ def prepare_faq_batch(model: AgentModel, batch_size: int = 1) -> int:
                 question=question,
                 result=result,
             )
-            _prepare_reply(session, current, result.reply)
+            now = datetime.now(timezone.utc)
+            conversation = _conversation_for_inbox(session, current)
+            if conversation is None or not bot_can_reply(session, conversation, now):
+                _ignore_inbox(current)
+                continue
+            reason = result.guardrail_reason
+            if reason in MODEL_HANDOFF_REASONS:
+                start_handoff(session, conversation, reason, now)
+                notice = handoff_reply(question, reason)
+                if reason == "model_unavailable":
+                    notice = result.reply + "\n\n" + notice
+                _prepare_reply(session, current, notice, allow_during_handoff=True)
+            else:
+                _prepare_reply(session, current, result.reply)
             prepared += 1
     return prepared
+
+
+def _voice_message_identity(message: InboxMessage):
+    return (
+        ConversationMessage.tenant_id == message.tenant_id,
+        ConversationMessage.conversation_id == message.conversation_id,
+        ConversationMessage.external_message_id == message.message_id,
+        ConversationMessage.direction == "inbound",
+    )
+
+
+def _conversation_for_inbox(session: Session, message: InboxMessage) -> Conversation | None:
+    if message.tenant_id is None or message.conversation_id is None:
+        return None
+    return lock_conversation(session, message.tenant_id, message.conversation_id)
+
+
+def _ignore_inbox(message: InboxMessage) -> None:
+    message.status = "ignored"
+    message.processed_at = datetime.now(timezone.utc)
+    message.faq_claimed_at = None
+
+
+def _transcribe_message(message: InboxMessage, voice: VoiceProcessor | None) -> str:
+    with session_scope() as session:
+        transcript = session.scalar(
+            select(ConversationMessage.transcript).where(*_voice_message_identity(message))
+        )
+    if transcript:
+        return transcript
+    if voice is not None:
+        try:
+            return voice.process(message.phone_number_id, message.body)
+        except VoiceError:
+            LOGGER.info("Voice transcription unavailable for inbox row %s", message.id)
+    return ""
 
 
 def _faq_claim_available():
@@ -198,7 +292,7 @@ def _claim_faq_message() -> InboxMessage | None:
 
 def _prepare_reply(
     session: Session, message: InboxMessage, body: str,
-    *, buttons: list[dict[str, str]] | None = None,
+    *, buttons: list[dict[str, str]] | None = None, allow_during_handoff: bool = False,
 ) -> None:
     session.add(
         OutboxMessage(
@@ -208,6 +302,7 @@ def _prepare_reply(
             message_type="interactive" if buttons else "text",
             body=body,
             reply_buttons=buttons or None,
+            allow_during_handoff=allow_during_handoff,
         )
     )
     message.status = "processed"
@@ -242,6 +337,12 @@ def claim_outbox_batch(
         claimed = []
 
         for message in messages:
+            inbound = session.get(InboxMessage, message.inbox_message_id)
+            if inbound is not None and not message.allow_during_handoff:
+                conversation = _conversation_for_inbox(session, inbound)
+                if conversation and not bot_can_reply(session, conversation, datetime.now(timezone.utc)):
+                    message.status = "suppressed"
+                    continue
             message.status = "sending"
             message.attempts += 1
             message.last_error = None
@@ -476,9 +577,19 @@ def _poll_messages(model: AgentModel | None) -> None:
     LOGGER.info("ClinicFlow worker started")
 
     with WhatsAppClient.from_environment() as sender:
+        voice_mode = os.getenv("VOICE_TRANSCRIBER", "off").strip().lower()
+        if voice_mode not in {"off", "whisper"}:
+            raise ValueError("VOICE_TRANSCRIBER must be off or whisper")
+        voice = (
+            VoiceProcessor(sender, WhisperTranscriber(os.getenv("WHISPER_MODEL", "small")))
+            if voice_mode == "whisper" else None
+        )
         while True:
             recovered = recover_stale_sends(stale_send_seconds)
-            prepared = prepare_faq_batch(model) if model is not None else prepare_echo_batch()
+            prepared = (
+                prepare_faq_batch(model, voice=voice)
+                if model is not None else prepare_echo_batch()
+            )
             result = send_outbox_batch(
                 sender,
                 max_attempts=max_attempts,

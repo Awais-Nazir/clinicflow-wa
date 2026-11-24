@@ -299,6 +299,7 @@ class Conversation(Base):
         DateTime(timezone=True)
     )
     booking_draft: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    human_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -309,6 +310,30 @@ class Conversation(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class HandoffCase(Base):
+    """A staff-visible case for a conversation that needs a human."""
+
+    __tablename__ = "handoff_cases"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id"], ["conversations.id", "conversations.tenant_id"],
+            name="fk_handoff_conversation_tenant",
+        ),
+        Index("ix_handoff_tenant_open", "tenant_id", "closed_at"),
+        Index(
+            "uq_handoff_open_conversation", "conversation_id", unique=True,
+            postgresql_where=text("closed_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger)
+    conversation_id: Mapped[int] = mapped_column(BigInteger)
+    reason: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Provider(Base):
@@ -432,6 +457,7 @@ class ConversationMessage(Base):
     direction: Mapped[str] = mapped_column(String(16), nullable=False)
     message_type: Mapped[str] = mapped_column(String(32), nullable=False)
     body: Mapped[str | None] = mapped_column(Text)
+    transcript: Mapped[str | None] = mapped_column(Text)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -594,6 +620,7 @@ class OutboxMessage(Base):
     message_type: Mapped[str] = mapped_column(String(32), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     reply_buttons: Mapped[list[dict[str, str]] | None] = mapped_column(JSONB)
+    allow_during_handoff: Mapped[bool] = mapped_column(Boolean, server_default="false")
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

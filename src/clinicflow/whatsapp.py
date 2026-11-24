@@ -6,6 +6,8 @@ from typing import Any, Self
 
 import httpx
 
+from clinicflow.voice import VoiceError
+
 DEFAULT_GRAPH_API_VERSION = "v27.0"
 DEFAULT_GRAPH_API_BASE_URL = "https://graph.facebook.com"
 DEFAULT_TIMEOUT_SECONDS = 20.0
@@ -148,6 +150,50 @@ class WhatsAppClient:
 
         return provider_message_id
 
+    def download_audio(
+        self, *, phone_number_id: str, media_id: str, max_bytes: int,
+    ) -> bytes:
+        """Resolve a media ID scoped to this phone, then download bounded audio."""
+
+        if not media_id.isascii() or not media_id.isdecimal() or max_bytes < 1:
+            raise VoiceError("invalid audio reference")
+        headers = {"Authorization": f"Bearer {self._access_token}"}
+        try:
+            metadata = self._http_client.get(
+                f"{self._base_url}/{self._api_version}/{media_id}",
+                params={"phone_number_id": phone_number_id},
+                headers=headers,
+                follow_redirects=False,
+            )
+            metadata.raise_for_status()
+            details = metadata.json()
+            if not isinstance(details, dict):
+                raise VoiceError("invalid audio metadata")
+            size = details.get("file_size")
+            if size is not None and int(size) > max_bytes:
+                raise VoiceError("audio exceeds the size limit")
+            raw_url = details.get("url")
+            if not isinstance(raw_url, str):
+                raise VoiceError("missing audio URL")
+            url = httpx.URL(raw_url)
+            if not _authorized_media_url(url):
+                raise VoiceError("unrecognized WhatsApp media host")
+            with self._http_client.stream(
+                "GET", url, headers=headers, follow_redirects=False,
+            ) as response:
+                response.raise_for_status()
+                mime = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                if not (mime.startswith("audio/") or mime in {"application/ogg", "application/octet-stream"}):
+                    raise VoiceError("unsupported audio content type")
+                audio = bytearray()
+                for chunk in response.iter_bytes(chunk_size=16384):
+                    if len(audio) + len(chunk) > max_bytes:
+                        raise VoiceError("audio exceeds the size limit")
+                    audio.extend(chunk)
+                return bytes(audio)
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError, TypeError) as error:
+            raise VoiceError("could not retrieve WhatsApp audio") from error
+
     def close(self) -> None:
         if self._owns_http_client:
             self._http_client.close()
@@ -181,3 +227,14 @@ def _format_graph_error(response: httpx.Response) -> str:
     code = details.get("code")
     code_suffix = f", code {code}" if code is not None else ""
     return f"WhatsApp Graph API returned HTTP {response.status_code}{code_suffix}: {message}"
+
+
+def _authorized_media_url(url: httpx.URL) -> bool:
+    host = url.host.lower()
+    return (
+        url.scheme == "https" and not url.userinfo and url.port in {None, 443}
+        and (
+            host == "lookaside.fbsbx.com"
+            or host.endswith((".whatsapp.net", ".fbcdn.net"))
+        )
+    )
