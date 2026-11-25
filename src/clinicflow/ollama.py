@@ -35,6 +35,8 @@ class OllamaModel:
         model: str = DEFAULT_OLLAMA_MODEL,
         base_url: str = DEFAULT_OLLAMA_BASE_URL,
         max_output_tokens: int = DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS,
+        access_client_id: str = "",
+        access_client_secret: str = "",
         http_client: httpx.Client | None = None,
     ) -> None:
         normalized_model = model.strip()
@@ -45,6 +47,19 @@ class OllamaModel:
             raise ValueError("Ollama base URL cannot be empty")
         if not 1 <= max_output_tokens <= OLLAMA_MAX_GENERATION_TOKENS:
             raise ValueError(f"Ollama max output tokens must be between 1 and {OLLAMA_MAX_GENERATION_TOKENS}")
+
+        access_client_id = access_client_id.strip()
+        access_client_secret = access_client_secret.strip()
+        if bool(access_client_id) != bool(access_client_secret):
+            raise ValueError("Ollama requires both Cloudflare Access credentials")
+        self._access_headers: dict[str, str] = {}
+        if access_client_id:
+            if httpx.URL(normalized_base_url).scheme != "https":
+                raise ValueError("Ollama requires an HTTPS base URL with Cloudflare Access credentials")
+            self._access_headers = {
+                "CF-Access-Client-Id": access_client_id,
+                "CF-Access-Client-Secret": access_client_secret,
+            }
 
         self.model_name = normalized_model
         self._max_output_tokens = max_output_tokens
@@ -57,11 +72,13 @@ class OllamaModel:
 
     @classmethod
     def from_env(cls) -> "OllamaModel":
-        """Build an adapter from optional local-development environment vars."""
+        """Build an adapter from environment variables."""
 
         return cls(
             model=os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
             base_url=os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL),
+            access_client_id=os.getenv("OLLAMA_CF_ACCESS_CLIENT_ID", ""),
+            access_client_secret=os.getenv("OLLAMA_CF_ACCESS_CLIENT_SECRET", ""),
             max_output_tokens=_env_positive_int(
                 "OLLAMA_MAX_OUTPUT_TOKENS",
                 DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS,
@@ -91,7 +108,12 @@ class OllamaModel:
             },
         }
         try:
-            response = self._http_client.post(self._chat_url, json=payload)
+            response = self._http_client.post(
+                self._chat_url,
+                json=payload,
+                headers=self._access_headers,
+                follow_redirects=False if self._access_headers else httpx.USE_CLIENT_DEFAULT,
+            )
             response.raise_for_status()
         except httpx.HTTPError as error:
             raise OllamaError(f"Ollama request failed: {error}") from error

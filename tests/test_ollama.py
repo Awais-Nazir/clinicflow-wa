@@ -144,6 +144,25 @@ def test_ollama_adapter_reports_http_failure() -> None:
         model.complete((AgentMessage(role="user", content="Hello"),), [])
 
 
+def test_ollama_adapter_sends_access_credentials_on_each_chat_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("https://ollama.test/api/chat")
+        assert request.headers["CF-Access-Client-Id"] == "test-id"
+        assert request.headers["CF-Access-Client-Secret"] == "test-secret"
+        return httpx.Response(200, json={"message": {"content": "Hello"}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        model = OllamaModel(
+            base_url="https://ollama.test",
+            access_client_id="test-id",
+            access_client_secret="test-secret",
+            http_client=client,
+        )
+        turn = model.complete((AgentMessage(role="user", content="Hello"),), [])
+
+    assert turn.text == "Hello"
+
+
 def test_ollama_adapter_discards_reply_cut_off_by_token_limit() -> None:
     with httpx.Client(
         transport=httpx.MockTransport(

@@ -72,6 +72,11 @@ Ollama defaults to `http://127.0.0.1:11434`. Set `OLLAMA_BASE_URL` when it is
 running on another port, and use `OLLAMA_MODEL` to test another local model.
 Add `--case hydra-price-en` to run one case while developing.
 
+For Ollama behind Cloudflare Access, use the published HTTPS hostname as
+`OLLAMA_BASE_URL` and set `OLLAMA_CF_ACCESS_CLIENT_ID` and
+`OLLAMA_CF_ACCESS_CLIENT_SECRET` in the worker's config vars. With both
+credentials configured, the worker authenticates each Ollama chat request.
+
 ## Local PostgreSQL
 
 Start the Compose-managed PostgreSQL 18 container:
