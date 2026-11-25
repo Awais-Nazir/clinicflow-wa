@@ -214,6 +214,45 @@ def test_faq_webhook_saves_one_trace_intent_and_sent_message(
         ]
 
 
+@pytest.mark.parametrize(
+    ("body", "expected_reply", "expected_agent_runs"),
+    [
+        ("Thanks! 🙏", "You’re welcome!", 0),
+        ("Bohat shukriya", "Koi baat nahi!", 0),
+        ("بہت شکریہ۔", "کوئی بات نہیں!", 0),
+        ("Thanks, what are your opening hours?", "Clinic subah 10:00 baje khulti hai.", 1),
+    ],
+)
+def test_faq_worker_acknowledges_only_standalone_thanks(
+    monkeypatch: pytest.MonkeyPatch,
+    database_engine: Engine,
+    body: str,
+    expected_reply: str,
+    expected_agent_runs: int,
+) -> None:
+    monkeypatch.setenv("META_APP_SECRET", APP_SECRET)
+    seed_demo_clinic("phone-456")
+    payload = inbound_text_payload()
+    message = payload["entry"][0]["changes"][0]["value"]["messages"][0]
+    message["text"]["body"] = body
+    raw_body = json.dumps(payload).encode()
+    with TestClient(app) as client:
+        assert client.post(
+            WEBHOOK_URL, content=raw_body, headers=signed_headers(raw_body)
+        ).status_code == 200
+
+    class Model(FaqTestModel):
+        def complete(self, messages, tools):
+            assert expected_agent_runs, "Standalone thanks should skip the model"
+            return super().complete(messages, tools)
+
+    assert prepare_faq_batch(Model()) == 1
+    assert prepare_faq_batch(Model()) == 0
+    with database_engine.connect() as connection:
+        assert connection.scalar(text("SELECT body FROM outbox_messages")) == expected_reply
+        assert connection.scalar(text("SELECT count(*) FROM agent_runs")) == expected_agent_runs
+
+
 def test_faq_worker_sends_localized_retry_notice_when_model_is_down(
     monkeypatch: pytest.MonkeyPatch, database_engine: Engine
 ) -> None:

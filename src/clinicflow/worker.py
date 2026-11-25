@@ -169,6 +169,11 @@ def prepare_faq_batch(
             if not quota.record_message(session, current):
                 prepared += _quota_handoff(session, current, conversation, quota, "message_limit", question, now)
                 continue
+            acknowledgment = _thanks_reply(question) if message.message_type != "interactive" else None
+            if acknowledgment is not None:
+                _prepare_reply(session, current, acknowledgment)
+                prepared += 1
+                continue
             booking = handle_booking_message(
                 session,
                 tenant_id=message.tenant_id,
@@ -222,6 +227,18 @@ def prepare_faq_batch(
                 _prepare_reply(session, current, result.reply)
             prepared += 1
     return prepared
+
+
+def _thanks_reply(question: str) -> str | None:
+    """Acknowledge standalone thanks before booking or the FAQ agent."""
+    phrase = " ".join(question.casefold().split()).rstrip(" .!۔🙏😊\ufe0f")
+    if phrase in {"thanks", "thank you", "thanks a lot", "thanks so much", "thank you so much"}:
+        return "You’re welcome!"
+    if phrase in {"shukriya", "shukria", "bohat shukriya", "bohot shukriya", "bahut shukriya"}:
+        return "Koi baat nahi!"
+    if phrase in {"شکریہ", "بہت شکریہ"}:
+        return "کوئی بات نہیں!"
+    return None
 
 
 def _quota_handoff(
