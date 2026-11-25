@@ -104,17 +104,17 @@ def test_agent_executes_tool_then_returns_grounded_answer(
         (
             "Laser treatment available hai?",
             "roman_ur",
-            "Mujhe clinic ki available maloomat mein iska jawab nahi mila.",
+            "Mujhe clinic ki maloomat mein iska jawab nahi mila. Aap clinic ki team se pooch sakte hain.",
         ),
         (
             "کیا لیزر علاج دستیاب ہے؟",
             "ur",
-            "مجھے دستیاب کلینک کی معلومات میں اس کا جواب نہیں ملا۔",
+            "مجھے کلینک کی معلومات میں اس کا جواب نہیں ملا۔ آپ کلینک کے عملے سے پوچھ سکتے ہیں۔",
         ),
         (
             "Do you provide laser treatment?",
             "en",
-            "I couldn't find that in the clinic information available to me.",
+            "I couldn't find that detail in the clinic's information. You're welcome to check with the clinic team.",
         ),
     ],
 )
@@ -194,7 +194,7 @@ def test_agent_uses_localized_fallback_when_tool_result_lacks_answer(
     assert result.tool_events[0].error is None
     assert result.used_fallback
     assert result.guardrail_reason == "answer_not_in_clinic_data"
-    assert result.reply == "Mujhe clinic ki available maloomat mein iska jawab nahi mila."
+    assert result.reply == "Mujhe clinic ki maloomat mein iska jawab nahi mila. Aap clinic ki team se pooch sakte hain."
 
 
 def test_missing_named_service_cannot_use_unrelated_catalogue() -> None:
@@ -237,6 +237,28 @@ def test_named_service_cannot_reuse_another_services_price() -> None:
     assert not model.calls
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "How much is a Hydra facial and how long does it take?",
+        "How much does a Hydra facial cost, and how long does it take?",
+        "How long does a Hydra facial take and how much does it cost?",
+    ],
+)
+def test_service_price_and_duration_come_from_the_same_record(question: str) -> None:
+    tenant = seed_demo_clinic("faq-price-duration-test")
+    model = ScriptedModel([])
+    result = run_faq_agent(
+        question=question, tenant_id=tenant.id, model=model, persist_trace=False,
+    )
+
+    assert result.reply == "Hydra facial costs PKR 8500.00 and takes 60 minutes."
+    assert result.used_fallback is False
+    assert not model.calls
+    assert result.tool_events[0].name == "get_services"
+    assert [service["name"] for service in result.tool_events[0].output["services"]] == ["Hydra facial"]
+
+
 def test_agent_rejects_invented_numeric_fact(database_engine: Engine) -> None:
     tenant = seed_demo_clinic("phone-456")
     model = ScriptedModel(
@@ -264,7 +286,7 @@ def test_agent_rejects_invented_numeric_fact(database_engine: Engine) -> None:
     assert result.guardrail_reason == "unsupported_numeric_facts"
     assert result.unsupported_numbers == ("9999",)
     assert result.reply == (
-        "Mujhe clinic ki available maloomat mein iska jawab nahi mila."
+        "Mujhe clinic ki maloomat mein iska jawab nahi mila. Aap clinic ki team se pooch sakte hain."
     )
 
 

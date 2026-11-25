@@ -219,7 +219,7 @@
     "expect_fallback": true,
     "expected_tool": null,
     "tool_arguments": {},
-    "required_substrings": ["available maloomat"],
+    "required_substrings": ["jawab nahi mila"],
     "fixture_reply": "Haan, sab insurance accept hoti hai."
   },
   {
@@ -230,7 +230,7 @@
     "expect_fallback": true,
     "expected_tool": null,
     "tool_arguments": {},
-    "required_substrings": ["دستیاب کلینک کی معلومات"],
+    "required_substrings": ["جواب نہیں ملا"],
     "fixture_reply": "جی ہاں، ایمرجنسی سروس موجود ہے۔"
   },
   {

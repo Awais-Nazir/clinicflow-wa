@@ -5,11 +5,13 @@ import re
 from clinicflow.booking_time import WEEKDAYS
 
 SERVICE_QUESTION = re.compile(
-    r"^(?:how much (?:is|does) (?:a |an |the )?|"
+    r"^(?:(?P<price>how much) (?:is|does) (?:a |an |the )?|"
     r"(?:can|could) i book (?:a |an |the )?|"
     r"(?:do you|does (?:the|your) clinic) (?:offer|provide|have) |"
-    r"how long (?:is|does) (?:a |an |the )?)"
-    r"(?P<name>[\w -]+?)(?: (?:cost|take))?[?.!]*$",
+    r"(?P<duration>how long) (?:is|does) (?:a |an |the )?)"
+    r"(?P<name>[\w -]+?)(?: (?:cost|take))?"
+    r"(?:,? and (?:(?P<also_price>how much does it cost)|"
+    r"(?P<also_duration>how long does it take)))?[?.!]*$",
     re.IGNORECASE,
 )
 PARKING = re.compile(
@@ -66,7 +68,7 @@ def scope_faq_evidence(
         ]
         return {"results": matching} if matching else None
     if tool_name == "get_services":
-        match = SERVICE_QUESTION.fullmatch(question)
+        match = _named_service_question(question)
         key = "services"
     elif tool_name == "get_clinic_info":
         match = DOCTOR_QUESTION.search(question)
@@ -77,13 +79,6 @@ def scope_faq_evidence(
         return output
 
     name = _name_key(match["name"])
-    # Catalogue requests have no individual record to look up.
-    if key == "services" and (
-        name in {"services", "treatments", "consultations", "any services", "any treatments"}
-        or re.search(r"\b(?:and|or)\b", name)
-    ):
-        return output
-
     records = output.get(key)
     if not isinstance(records, list):
         return None
@@ -97,8 +92,25 @@ def scope_faq_evidence(
     return {key: matching} if matching else None
 
 
-def is_named_price_question(question: str) -> bool:
-    return question.casefold().startswith("how much ") and is_service_question(question)
+def _named_service_question(question: str) -> re.Match[str] | None:
+    match = SERVICE_QUESTION.fullmatch(question)
+    if match is None:
+        return None
+    name = _name_key(match["name"])
+    # Catalogue requests have no individual record to look up.
+    if name in {"services", "treatments", "consultations", "any services", "any treatments"}:
+        return None
+    if re.search(r"\b(?:and|or)\b", name):
+        return None
+    return match
+
+
+def requested_service_details(question: str) -> tuple[bool, bool]:
+    """Identify requests for a named service's price, duration, or both."""
+    match = _named_service_question(question)
+    if match is None:
+        return False, False
+    return bool(match["price"] or match["also_price"]), bool(match["duration"] or match["also_duration"])
 
 
 def is_service_question(question: str) -> bool:
@@ -177,8 +189,10 @@ def render_clinic_hours(
     }[language]
 
 
-def render_service_price(output: dict[str, object]) -> str | None:
-    """Render a price only for an unambiguous catalog record."""
+def render_service_details(
+    output: dict[str, object], *, include_price: bool, include_duration: bool,
+) -> str | None:
+    """Answer with the requested facts from one catalogue record."""
 
     services = output.get("services")
     if not isinstance(services, list) or len(services) != 1:
@@ -186,13 +200,31 @@ def render_service_price(output: dict[str, object]) -> str | None:
     service = services[0]
     if not isinstance(service, dict):
         return None
+    name = service.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+
+    price_phrase = None
     price = service.get("price")
-    if not isinstance(price, dict):
+    if include_price and isinstance(price, dict):
+        currency, amount = price.get("currency"), price.get("amount")
+        if isinstance(currency, str) and currency and isinstance(amount, str) and amount:
+            price_phrase = f"costs {currency} {amount}"
+    duration = service.get("duration_minutes")
+    duration_phrase = None
+    if include_duration and type(duration) is int and duration > 0:
+        unit = "minute" if duration == 1 else "minutes"
+        duration_phrase = f"takes {duration} {unit}"
+
+    facts = [phrase for phrase in (price_phrase, duration_phrase) if phrase is not None]
+    if not facts:
         return None
-    name, currency, amount = service.get("name"), price.get("currency"), price.get("amount")
-    if not all(isinstance(value, str) and value for value in (name, currency, amount)):
-        return None
-    return f"{name} costs {currency} {amount}."
+    reply = f"{name} {' and '.join(facts)}."
+    if include_price and price_phrase is None:
+        return reply + " I couldn't find the price in the clinic's information."
+    if include_duration and duration_phrase is None:
+        return reply + " I couldn't find the duration in the clinic's information."
+    return reply
 
 
 def _name_key(name: str) -> str:

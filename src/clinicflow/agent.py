@@ -10,20 +10,22 @@ from typing import Literal, Protocol
 from clinicflow.agent_tools import ClinicToolbox, ToolExecutionError
 from clinicflow.faq_evidence import (
     INSTRUCTION_OVERRIDE,
-    is_named_price_question,
     is_service_question,
     policy_search,
     render_cash_acceptance,
     render_clinic_hours,
-    render_service_price,
+    render_service_details,
     requested_hours_day,
+    requested_service_details,
     scope_faq_evidence,
 )
 from clinicflow.grounding import check_numeric_grounding
 
 NO_CLINIC_ANSWER = "NO_CLINIC_ANSWER"
-SYSTEM_PROMPT = f"""You answer clinic FAQ messages. For a clinic question,
-your first response must call the relevant tool:
+SYSTEM_PROMPT = f"""You are the clinic's friendly WhatsApp receptionist. Help people
+feel welcome with clear, considerate replies that sound natural in a chat.
+
+For a clinic question, first call the relevant tool:
 - get_services for treatments offered, prices, or treatment durations.
 - get_clinic_info for hours, location, contact details, or doctors.
 - search_kb for policies and FAQs such as cancellation, payments, parking,
@@ -32,15 +34,19 @@ your first response must call the relevant tool:
 The two list tools take no arguments. If a tool reports invalid arguments,
 retry the call with the correct arguments.
 
-After the tool returns, answer the specific question briefly in the customer's
-language and script. Use only the relevant facts in the result. Copy numeric
-values as given, using local digits if appropriate. Use plain bullets for lists.
-A result on a related topic
-or a list that omits the requested person or treatment is insufficient. If the
-result does not answer the question, output only {NO_CLINIC_ANSWER}. Never
-diagnose or recommend treatment.
+After the tool returns, lead with the answer in the customer's language and
+script. Write Roman Urdu when the customer writes in Roman Urdu. Use a short,
+natural sentence for one detail and plain bullets when a list helps. Be kind
+and professional, and keep greetings and sign-offs brief when you use them.
+
+Answer each part you can verify using only relevant tool results. Copy numeric
+values as given, using local digits if appropriate. If only part of the answer
+is available, share it and say which detail you could not confirm. Use facts
+about the specific person, service, or policy the customer asked about. If no
+result answers any part of the question, output only {NO_CLINIC_ANSWER}.
+Never diagnose or recommend treatment.
 """
-PROMPT_VERSION = "faq-v5"
+PROMPT_VERSION = "faq-v6"
 MAX_MODEL_ROUNDS = 4
 MAX_TOOL_CALLS = 8
 REPLY_TONES = {
@@ -160,10 +166,10 @@ def fallback_reply(language: ReplyLanguage) -> str:
     """Return the grounded don't-know response in the detected language."""
 
     if language == "ur":
-        return "مجھے دستیاب کلینک کی معلومات میں اس کا جواب نہیں ملا۔"
+        return "مجھے کلینک کی معلومات میں اس کا جواب نہیں ملا۔ آپ کلینک کے عملے سے پوچھ سکتے ہیں۔"
     if language == "roman_ur":
-        return "Mujhe clinic ki available maloomat mein iska jawab nahi mila."
-    return "I couldn't find that in the clinic information available to me."
+        return "Mujhe clinic ki maloomat mein iska jawab nahi mila. Aap clinic ki team se pooch sakte hain."
+    return "I couldn't find that detail in the clinic's information. You're welcome to check with the clinic team."
 
 
 def _model_unavailable_reply(language: ReplyLanguage) -> str:
@@ -210,6 +216,7 @@ def run_faq_agent(
     run_started = perf_counter()
     policy_query = policy_search(normalized_question)
     hours_day = requested_hours_day(normalized_question) if policy_query is None else None
+    include_price, include_duration = requested_service_details(normalized_question)
 
     for round_index in range(MAX_MODEL_ROUNDS):
         if INSTRUCTION_OVERRIDE.search(normalized_question):
@@ -260,10 +267,10 @@ def run_faq_agent(
                         output = {"missing_requested_record": True}
                     else:
                         output = scoped
-                        if call.name == "get_services" and is_named_price_question(
-                            normalized_question
-                        ):
-                            grounded_reply = render_service_price(output)
+                        if call.name == "get_services" and (include_price or include_duration):
+                            grounded_reply = render_service_details(
+                                output, include_price=include_price, include_duration=include_duration,
+                            )
                             missing_record = missing_record or grounded_reply is None
                         if call.name == "get_clinic_info" and hours_day is not None:
                             grounded_reply = render_clinic_hours(output, hours_day, language)
